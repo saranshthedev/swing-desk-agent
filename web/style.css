@@ -129,7 +129,8 @@ legend { font-weight: 600; padding: 0 4px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 500; }
 .btn.danger { border-color: #f3b4ae; color: var(--bad); background: transparent; }
 .side .btn.danger { color: #fca5a5; border-color: #f87171; width: 100%; }
-.side .btn { width: 100%; }
+.side .btn { width: 100%; background: transparent; color: #ffffff; border-color: #4b587a; }
+.side .btn:hover { background: var(--side-active); }
 .btn:disabled { opacity: 0.6; cursor: wait; }
 .btn:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 details > summary.btn { list-style: none; }

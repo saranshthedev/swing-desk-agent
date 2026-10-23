@@ -10,7 +10,10 @@ const drafts = {}; // unsaved editor state (strategies, playbooks)
 // ---------- formatting ----------
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const money = (n) => (n < 0 ? '−' : '') + '₹' + Math.abs(Math.round(n)).toLocaleString('en-IN');
+const money = (n) => {
+  const r = Math.round(n);
+  return (r < 0 ? '−' : '') + '₹' + Math.abs(r).toLocaleString('en-IN');
+};
 const price = (n) => '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const when = (iso) => new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' IST';
 const indiaToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
@@ -90,13 +93,12 @@ const pages = {
     const approved = S.intents.filter((i) => i.status === 'approved');
     const open = S.lots.filter((l) => l.status === 'open');
     const nextRuns = S.playbooks.filter((pb) => pb.enabled).map((pb) => `<li><span>${esc(pb.name)}</span><span class="mono">${esc(scheduleText(pb.schedule))}</span></li>`).join('');
-    loadLedger();
     return `
       <header class="page-head"><div><p class="muted">${esc(S.status.today)} · India date</p><h1>Today</h1></div>
         <div class="actions"><a class="btn" href="#/research">Add broker price</a><a class="btn primary" href="#/plan">New plan</a></div></header>
       <section class="tiles">
         ${tile('Loss if every stop is hit', `${money(p.openRisk)} / ${money(p.openRiskLimit)}`, p.openRisk, p.openRiskLimit, 'Your total open risk right now')}
-        ${tile('Open lots', `${p.openLots} / ${st.maxOpenLots}`, p.openLots, st.maxOpenLots, `${p.openSymbols} different stocks`)}
+        ${tile('Open lots', `${p.openLots} / ${st.maxOpenLots}`, p.openLots, st.maxOpenLots, p.openSymbols === 1 ? 'In 1 stock' : `In ${p.openSymbols} different stocks`)}
         ${tile('Borrowed (MTF)', `${money(p.borrowed)} / ${money(p.borrowedLimit)}`, p.borrowed, p.borrowedLimit, 'Borrowed money is exposure, not extra risk money')}
         ${tile('This week', money(p.weekPnl), Math.max(0, -p.weekPnl), p.weekLossLimit, p.buysPaused ? 'New buys are paused for this week' : `New buys pause at −${money(p.weekLossLimit)}`)}
       </section>
@@ -229,7 +231,6 @@ const pages = {
   },
 
   ledger() {
-    loadLedger();
     return `<header class="page-head"><h1>Ledger</h1></header>
       <p class="lead">Every change is a new entry. Nothing is edited or deleted. Each entry includes a fingerprint of the one before it, so tampering shows up.</p>
       <section class="card"><div id="chain" class="muted">Checking…</div><ul class="rows" id="ledger-rows"><li class="muted">Loading…</li></ul></section>`;
@@ -605,6 +606,8 @@ function render() {
   const [route = 'today', arg] = location.hash.replace(/^#\/?/, '').split('/');
   const page = pages[route] ?? pages.today;
   main.innerHTML = page(arg && decodeURIComponent(arg));
+  // Fill the activity/ledger lists only after the page markup exists.
+  if (page === pages.today || page === pages.ledger) loadLedger();
   for (const a of document.querySelectorAll('.side a')) a.toggleAttribute('aria-current', a.dataset.route === route || (route === 'request' && a.dataset.route === 'requests'));
   const pending = S.intents.filter((i) => i.status === 'pending').length;
   const count = $('#pending-count');

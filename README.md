@@ -44,6 +44,7 @@ Change it with `SWING_DESK_DATA`, the port with `SWING_DESK_PORT`, backups with 
 | `npm start` | Web app and playbook scheduler on 127.0.0.1 |
 | `npm run mcp` | MCP server on stdio (needs `SWING_DESK_AGENT_KEY`) |
 | `npm test` | Test suite (no network, no real data) |
+| `npm run test:browser [folder]` | Optional owner-flow check in an installed Chrome/Edge, with a real MCP client; saves screenshots if a folder is given |
 | `npm run check` | Verify the ledger hash chain |
 | `node bin/desk.js backup [file]` | Consistent database copy |
 | `node bin/desk.js export [file]` | All events as JSON Lines (no PIN, keys or call log) |

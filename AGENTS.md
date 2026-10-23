@@ -58,5 +58,6 @@ npm test
 node --check web/app.js
 ```
 
-For UI changes, check the real browser flow with a temporary `SWING_DESK_DATA`, including
-narrow screens and keyboard use. If browser checks were not possible, say so.
+For UI changes run `npm run test:browser` (installed Chrome/Edge, temporary data, synthetic
+values; checks the approval flow, 390 px overflow, keyboard focus and console errors) and look
+at its screenshots. If browser checks were not possible, say so.
