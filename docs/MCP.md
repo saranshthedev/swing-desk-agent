@@ -1,6 +1,34 @@
 # Connecting a model app over MCP
 
-## 1. Create an agent
+## Quickest: Claude Code
+
+```sh
+npm run connect
+```
+
+It asks for (or creates) your approval PIN, asks what Claude may do, creates an agent key and
+runs Claude Code’s own `claude mcp add` for you (user scope, so every project sees it). It finds
+the `claude` command on your PATH or the copy bundled with the VS Code / Cursor extension. The key
+is written into Claude Code’s config and not printed. Start a new conversation and run `/mcp`.
+
+Claude Code only starts the desk’s MCP process when it needs it; keep `npm start` running so you
+can approve requests in the browser. The MCP process and the web app share the same database.
+
+### Scheduled runs with Claude Code
+
+Pair a playbook with a scheduled headless run (Windows Task Scheduler, cron):
+
+```sh
+claude -p "Call the swing-desk next_task tool. If it returns a task, follow its instructions exactly and finish with complete_task. If it returns null, stop." --allowedTools "mcp__swing-desk__*" "WebSearch" "WebFetch"
+```
+
+`--allowedTools` keeps the run to the desk’s tools and web research (no shell or file access).
+Run it from an empty folder. If `claude` is not on your PATH, use the full path `npm run connect`
+printed when it found Claude Code. Cloud-scheduled routines cannot reach a desk on your computer.
+
+## Any other MCP app
+
+### 1. Create an agent
 
 Open the desk → **Agents & MCP** → *Add an agent*. Pick the lowest access that does the job:
 
@@ -15,7 +43,7 @@ No level can approve, place orders, change access, edit strategies or playbooks,
 
 The key is shown once. The page also shows the exact config block to paste.
 
-## 2. Add the server to your model app
+### 2. Add the server to your model app
 
 Claude Desktop (`claude_desktop_config.json`), Claude Code (`.mcp.json` or `claude mcp add`),
 VS Code and other MCP clients all accept the same stdio shape:
@@ -47,7 +75,7 @@ Prices (`quote`) and MTF requirements (`funding`) are shown to the owner with a 
 **confirm** button. They count toward approval only after the owner checks Kite shows the same,
 and only for 5 minutes (prices) or the same India day (MTF) from that confirmation.
 
-## 3. Automate with playbooks
+## Automate with playbooks
 
 The desk does not run models. It queues tasks on a schedule; a model app takes them.
 

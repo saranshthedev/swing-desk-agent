@@ -29,8 +29,11 @@ node --version   # v24.x
 npm start        # http://127.0.0.1:8790
 ```
 
-1. **Settings** → set your 6–12 digit approval PIN and your risk limits.
-2. **Agents & MCP** → add an agent, copy its config into your model app ([docs/MCP.md](docs/MCP.md)).
+1. **Connect Claude Code** (VS Code extension or terminal): in a second terminal run
+   `npm run connect`. It sets your approval PIN if needed, asks what Claude may do, creates a
+   key and registers the desk with Claude Code. Then start a new Claude conversation and run `/mcp`.
+   For other model apps use **Agents & MCP** in the desk ([docs/MCP.md](docs/MCP.md)).
+2. **Settings** → review your risk limits.
 3. **Strategies** → review the three starting templates or make your own.
 4. **Playbooks** → schedule work for your agents (optional).
 
@@ -42,6 +45,7 @@ Change it with `SWING_DESK_DATA`, the port with `SWING_DESK_PORT`, backups with 
 | Command | Does |
 |---|---|
 | `npm start` | Web app and playbook scheduler on 127.0.0.1 |
+| `npm run connect` | Set the PIN if needed, create a key and register the desk with Claude Code |
 | `npm run mcp` | MCP server on stdio (needs `SWING_DESK_AGENT_KEY`) |
 | `npm test` | Test suite (no network, no real data) |
 | `npm run test:browser [folder]` | Optional owner-flow check in an installed Chrome/Edge, with a real MCP client; saves screenshots if a folder is given |

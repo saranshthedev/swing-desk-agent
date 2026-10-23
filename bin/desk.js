@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // desk start            – run the web app at http://127.0.0.1:8790 and the playbook scheduler
 // desk mcp              – run the MCP server on stdio (for a model app; needs SWING_DESK_AGENT_KEY)
+// desk connect          – set the PIN if needed, create a key and register the desk with Claude Code
 // desk verify           – recompute the ledger hash chain
 // desk backup [file]    – consistent copy of the database
 // desk export [file]    – all events as JSON Lines (no PIN, keys or call log)
@@ -25,6 +26,20 @@ switch (command) {
   case 'mcp': {
     const { serveStdio } = await import('../src/mcp/server.js');
     serveStdio(store);
+    break;
+  }
+  case 'connect': {
+    const { connect } = await import('../src/connect.js');
+    const { UserError } = await import('../src/core/settings.js');
+    try {
+      await connect(store, { dataDirOverride: process.env.SWING_DESK_DATA });
+    } catch (err) {
+      if (!(err instanceof UserError)) throw err;
+      console.error(`\n${err.message}`);
+      process.exitCode = 1;
+    } finally {
+      store.close();
+    }
     break;
   }
   case 'verify': {
@@ -56,6 +71,6 @@ switch (command) {
     break;
   }
   default:
-    console.error('Usage: desk start | mcp | verify | backup [file] | export [file]');
+    console.error('Usage: desk start | mcp | connect | verify | backup [file] | export [file]');
     process.exitCode = 2;
 }
