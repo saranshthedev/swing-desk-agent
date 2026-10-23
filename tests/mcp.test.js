@@ -49,6 +49,14 @@ test('a lower level is refused even if the tool name is known', () => {
   assert.match(r.content[0].text, /needs draft access/);
 });
 
+test('an agent cannot confirm its own price through MCP', () => {
+  const d = desk();
+  const c = client(d, d.addAgent('draft').key);
+  const q = c.tool('add_evidence', { kind: 'quote', symbol: 'ABC', price: 100, summary: 'site' }).structuredContent;
+  c.tool('add_evidence', { kind: 'quote', symbol: 'ABC', summary: 'x', price: 100, confirms: q.id });
+  assert.equal(d.store.read((s) => s.evidence.some((e) => e.by === 'owner' || e.confirms)), false);
+});
+
 test('owner pause stops every tool except whoami', () => {
   const d = desk();
   const c = client(d, d.addAgent('propose').key);

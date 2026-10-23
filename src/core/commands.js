@@ -7,7 +7,7 @@ import { evaluate, orderTicket, planProblem, lotPlan } from './rules.js';
 import { estimateCosts, FEE_DEFAULTS } from './fees.js';
 import { validateSchedule } from './schedule.js';
 import { daysBetween, indiaDate, isDate } from './time.js';
-import { EVIDENCE_KINDS, OWNER_ONLY_EVIDENCE } from './evidence.js';
+import { EVIDENCE_KINDS, NEEDS_OWNER_CONFIRMATION } from './evidence.js';
 import { validateStrategy } from './strategies.js';
 
 export { EVIDENCE_KINDS };
@@ -119,9 +119,9 @@ function expiryDays(days = 30) {
 // ---------- research ----------
 
 export function addEvidence(state, input, { actor, newId, now }) {
+  if (input.confirms !== undefined) return confirmEvidence(state, input, { actor, newId, now });
   const kind = input.kind;
   if (!EVIDENCE_KINDS[kind]) throw new UserError(`Evidence kind must be one of: ${Object.keys(EVIDENCE_KINDS).join(', ')}.`);
-  if (OWNER_ONLY_EVIDENCE.has(kind) && actor !== 'owner') throw new UserError('Only the owner can record broker prices and MTF requirements.');
   const observedAt = input.observedAt === undefined ? new Date(now).toISOString() : input.observedAt;
   const observedMs = Date.parse(observedAt);
   if (!Number.isFinite(observedMs) || observedMs > now + 60_000) throw new UserError('The time it was observed must be a real time, not in the future.');
@@ -138,6 +138,30 @@ export function addEvidence(state, input, { actor, newId, now }) {
     data.marginPct = positive(input.marginPct, 'Own cash %');
     if (data.marginPct > 100) throw new UserError('Own cash % cannot be above 100.');
   }
+  return { events: [{ type: 'evidence.added', data }], result: { id: data.id } };
+}
+
+/**
+ * The owner confirms that an agent-gathered price or MTF requirement matches what Kite shows
+ * now. The confirmation is a new owner record observed at confirmation time; the agent's
+ * original stays as it was.
+ */
+function confirmEvidence(state, { confirms }, { actor, newId, now }) {
+  if (actor !== 'owner') throw new UserError('Only the owner can confirm a price or MTF requirement.');
+  const source = state.evidence.find((e) => e.id === confirms);
+  if (!source || !NEEDS_OWNER_CONFIRMATION.has(source.kind) || source.by === 'owner') {
+    throw new UserError('Only an agent’s price or MTF requirement can be confirmed.');
+  }
+  const data = {
+    id: newId('ev'),
+    kind: source.kind,
+    symbol: source.symbol,
+    observedAt: new Date(now).toISOString(),
+    summary: `Confirmed by owner against Kite. Found by ${source.by}${source.summary ? `: ${source.summary}` : ''}`.slice(0, 2_000),
+    sources: source.sources,
+    confirms: source.id,
+    ...(source.kind === 'quote' ? { price: source.price } : { marginPct: source.marginPct }),
+  };
   return { events: [{ type: 'evidence.added', data }], result: { id: data.id } };
 }
 

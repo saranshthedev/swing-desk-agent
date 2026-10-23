@@ -174,12 +174,14 @@ export function evaluateBuy(state, intent, now, answers = {}) {
     : check('weekly', 'Not paused for this week’s losses', 'pass', `This week so far: ${money(p.weekPnl)}`));
 
   const quote = latestEvidence(state, 'quote', intent.symbol, { ownerOnly: true });
+  const agentQuote = latestEvidence(state, 'quote', intent.symbol);
+  const unconfirmed = agentQuote && agentQuote.by !== 'owner' ? ` An agent found ₹${agentQuote.price}; confirm it if Kite shows the same.` : '';
   if (!quote) {
-    checks.push(check('quote', 'Fresh price from your broker', 'stale', 'Paste the current price from Kite. Quotes expire after 5 minutes.'));
+    checks.push(check('quote', 'Fresh price from your broker', 'stale', `Enter or confirm the current price from Kite. Prices count for 5 minutes.${unconfirmed}`));
   } else {
     const age = now - Date.parse(quote.observedAt);
     const gap = (Math.abs(quote.price - plan.entry) / plan.entry) * 100;
-    if (age > FIXED.quoteMaxAgeMs) checks.push(check('quote', 'Fresh price from your broker', 'stale', `Your last quote is ${Math.round(age / 60_000)} minutes old. Quotes expire after 5 minutes.`));
+    if (age > FIXED.quoteMaxAgeMs) checks.push(check('quote', 'Fresh price from your broker', 'stale', `Your last confirmed price is ${Math.round(age / 60_000)} minutes old. Prices count for 5 minutes.${unconfirmed}`));
     else if (gap > FIXED.quoteMaxGapPct) checks.push(check('quote', 'Fresh price from your broker', 'fail', `Price now ₹${quote.price} is ${gap.toFixed(1)}% away from the planned entry. Ask for a new plan.`));
     else checks.push(check('quote', 'Fresh price from your broker', 'pass', `₹${quote.price} at ${new Date(quote.observedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })} IST`));
   }
@@ -192,7 +194,9 @@ export function evaluateBuy(state, intent, now, answers = {}) {
   if (plan.buyType === 'mtf') {
     const funding = latestEvidence(state, 'funding', intent.symbol, { ownerOnly: true });
     if (!funding || indiaDate(Date.parse(funding.observedAt)) !== today) {
-      checks.push(check('funding', 'MTF cash requirement checked today', 'stale', 'Check this stock’s MTF requirement in Kite today and record it.'));
+      const agentFunding = latestEvidence(state, 'funding', intent.symbol);
+      const hint = agentFunding && agentFunding.by !== 'owner' ? ` An agent found ${agentFunding.marginPct}%; confirm it if Kite shows the same.` : '';
+      checks.push(check('funding', 'MTF cash requirement checked today', 'stale', `Check this stock’s MTF requirement in Kite today and record or confirm it.${hint}`));
     } else if (funding.marginPct > plan.marginPct) {
       checks.push(check('funding', 'MTF cash requirement checked today', 'fail', `Kite needs ${funding.marginPct}% own cash; the plan uses ${plan.marginPct}%.`));
     } else {

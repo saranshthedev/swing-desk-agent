@@ -14,6 +14,14 @@ real fill.
 
 Why it is built this way, and what changed from Swing Desk v3: [docs/RETHINK.md](docs/RETHINK.md).
 
+## Free forever
+
+Swing Desk Agent is completely free and open source. It does not integrate, and will not
+integrate, any paid API, paid data feed, subscription or hosted service. Your models gather
+information themselves with whatever their own apps can reach (web search, public exchange
+pages, filings) and record it with sources. Prices and MTF requirements an agent finds count
+toward approval only after you confirm in one click that Kite shows the same.
+
 ## Start
 
 ```sh
@@ -44,9 +52,9 @@ Change it with `SWING_DESK_DATA`, the port with `SWING_DESK_PORT`, backups with 
 
 1. An agent (or you) records evidence and sends a **buy request** naming a strategy.
 2. The desk recalculates shares and charges from *your* limits and runs every check: loss per
-   trade, gain vs risk, open lots, total open risk, borrowed money, weekly loss pause, a broker
+   trade, gain vs risk, open lots, total open risk, borrowed money, weekly loss pause, a confirmed
    price from the last 5 minutes, today’s news, today’s MTF requirement, and the strategy’s checklist.
-3. You paste a fresh Kite price if needed, answer the checklist’s yes/no items, enter your PIN and approve.
+3. You confirm the agent’s price (or type Kite’s), answer the checklist’s yes/no items, enter your PIN and approve.
 4. You place the order in Kite using the ticket, then record the actual fill. Sales are recorded
    the same way, with actual contract-note charges when you have them.
 

@@ -91,7 +91,7 @@ export const TOOLS = {
 
   list_evidence: {
     level: 'read',
-    description: `Recent evidence (broker quotes and MTF requirements from the owner; news, candles, calendar and other from anyone). ${UNTRUSTED}`,
+    description: `Recent evidence. Items with by = "owner" were entered or confirmed by the owner; others are agent-found and not verified. ${UNTRUSTED}`,
     inputSchema: obj({ symbol, limit: int('Max items, default 30') }),
     run: (store, _a, args) => store.read((s) => recentFirst(s.evidence, Math.min(200, args.limit ?? 30), (e) => !args.symbol || e.symbol === String(args.symbol).toUpperCase())),
   },
@@ -145,15 +145,20 @@ export const TOOLS = {
   add_evidence: {
     level: 'draft',
     write: 'write',
-    description: `Record evidence for a stock so strategy checklists can use it. Kinds you may add: news, candles, calendar, other (${['news', 'candles', 'calendar', 'other'].map((k) => `${k} = ${EVIDENCE_KINDS[k]}`).join('; ')}). Broker quotes and MTF requirements come only from the owner. observedAt is when the fact was observed (ISO time); news counts only on the same India date.`,
+    description: `Record what you found for a stock so strategy checklists can use it. Gather it yourself from sources your app can reach, and always give sources. Kinds: ${Object.entries(EVIDENCE_KINDS).map(([k, v]) => `${k} = ${v}`).join('; ')}. For quote give price (₹); for funding give marginPct (own cash % for MTF). A quote or funding value counts toward approval only after the owner confirms it matches Kite, so submit it close to when the owner will review. observedAt is when the fact was observed (ISO time); news counts only on the same India date. Never invent values.`,
     inputSchema: obj({
-      kind: { type: 'string', enum: ['news', 'candles', 'calendar', 'other'] },
+      kind: { type: 'string', enum: Object.keys(EVIDENCE_KINDS) },
       symbol,
+      price: num('quote only: last traded price ₹'),
+      marginPct: num('funding only: own cash % required for MTF (e.g. 30)'),
       summary: str('What you found, in plain words', 2000),
       observedAt: str('ISO 8601 time the fact was observed; default now', 40),
       sources: { type: 'array', items: str('Link or source name', 500), maxItems: 10 },
     }, ['kind', 'symbol', 'summary']),
-    run: (store, agent, args) => store.run(`agent:${agent.id}`, (s, ctx) => C.addEvidence(s, args, ctx)),
+    run: (store, agent, args) => {
+      const { confirms, ...rest } = args; // confirming is owner-only
+      return store.run(`agent:${agent.id}`, (s, ctx) => C.addEvidence(s, rest, ctx));
+    },
   },
 
   propose_buy: {

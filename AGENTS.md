@@ -4,8 +4,10 @@ Read `README.md` and `docs/RETHINK.md` first.
 
 ## Constraints
 
-- Free and local: Node 24 built-ins only. Do not add npm packages, a database server, a hosted
-  service, a paid data feed or a required model API key without an explicit change in requirements.
+- Completely free and open source (MIT). Never integrate a paid API, paid data feed, broker
+  data subscription, hosted service or required model API key. Information gathering is the
+  connected models’ job; the desk validates, records and gates it.
+- Node 24 built-ins only. No npm packages or database server.
 - The desk never places, modifies or cancels broker orders. Do not add order endpoints, even behind a flag.
 - No MCP tool may approve, change agent access, edit strategies/playbooks/PIN, or delete or rewrite events.
   Do not add an auto-approve path.
@@ -38,8 +40,9 @@ rather than changing existing ones.
 - Same-day MTF keeps MTF brokerage; Regular trades have no MTF interest/pledge.
 - Borrowed money is exposure, not risk budget. Sizing must satisfy both loss and cash limits.
 - Actual fill prices already include slippage. Actual charges override estimates.
-- Broker quote and MTF requirement evidence is owner-only. Quote freshness is 5 minutes; news must
-  be from the current India date.
+- Agents may submit prices and MTF requirements, but those gates pass only on owner-entered or
+  owner-confirmed values (a confirmation is a new owner record timed at confirmation). Quote
+  freshness is 5 minutes; news must be from the current India date.
 - Strategy rules only add restrictions. Saving a strategy bumps its version and invalidates
   pending requests made on the old version.
 

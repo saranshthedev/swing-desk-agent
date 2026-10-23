@@ -30,11 +30,29 @@ test('a broker quote older than five minutes blocks approval', () => {
   assert.equal(status(checks(d, id, BREAKOUT_ANSWERS), 'quote'), 'stale');
 });
 
-test('agents cannot record broker prices or MTF requirements', () => {
+test('agent-found prices count only after the owner confirms them, and only agents’ values can be confirmed', () => {
   const d = desk();
   const agent = d.addAgent('propose');
-  assert.throws(() => agent.run(C.addEvidence, { kind: 'quote', symbol: 'ABC', price: 100 }), /Only the owner/);
-  assert.throws(() => agent.run(C.addEvidence, { kind: 'funding', symbol: 'ABC', marginPct: 20 }), /Only the owner/);
+  agent.run(C.addEvidence, { kind: 'news', symbol: 'ABC', summary: 'Nothing new' });
+  const { id: quoteId } = agent.run(C.addEvidence, { kind: 'quote', symbol: 'ABC', price: 100.2, summary: 'NSE site' });
+  const { id: fundingId } = agent.run(C.addEvidence, { kind: 'funding', symbol: 'ABC', marginPct: 40, summary: 'MTF list' });
+  const { id } = buy(agent);
+  let ev = checks(d, id);
+  assert.equal(status(ev, 'quote'), 'stale');
+  assert.match(ev.checks.find((c) => c.id === 'quote').detail, /agent found ₹100.2/i);
+  assert.equal(status(ev, 'funding'), 'stale');
+
+  assert.throws(() => agent.run(C.addEvidence, { confirms: quoteId }), /Only the owner/);
+  d.clock.now += 4 * 60_000; // confirmation counts from when the owner confirms
+  d.owner(C.addEvidence, { confirms: quoteId });
+  d.owner(C.addEvidence, { confirms: fundingId });
+  d.clock.now += 4 * 60_000;
+  ev = checks(d, id);
+  assert.equal(status(ev, 'quote'), 'pass');
+  assert.equal(status(ev, 'funding'), 'pass');
+
+  const own = d.store.read((s) => s.evidence.find((e) => e.by === 'owner' && e.kind === 'quote'));
+  assert.throws(() => d.owner(C.addEvidence, { confirms: own.id }), /Only an agent’s/);
 });
 
 test('news from a previous India date does not count', () => {

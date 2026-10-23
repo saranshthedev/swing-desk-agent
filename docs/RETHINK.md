@@ -8,6 +8,14 @@ proposal import. This repository starts again around one idea:
 
 This page records what was removed, what was redone, what is new, and what was kept on purpose.
 
+## Ground rule: free forever
+
+The app is completely free and open source. It integrates no paid API, paid market or news
+feed, broker data subscription (for example Kite Connect), hosted service or required model
+key. Connected models are capable of finding information themselves; the desk’s job is to
+validate what they bring, record where it came from, and stop real money moving on anything
+the owner has not checked.
+
 ## Removed
 
 | v3 feature | Why it is gone | What replaces it |
@@ -17,6 +25,7 @@ This page records what was removed, what was redone, what is new, and what was k
 | One JSON “journal” blob saved with a single revision number | Any change rewrote everything; conflicts were coarse; history and audit were separate. | Append-only event ledger with a hash chain (see below). |
 | One global MCP access mode (Off / Read / Draft) | Every model client had the same power and was indistinguishable in the audit. | A separate key, access level, quota and expiry for each agent. |
 | `swing-desk-proposals.v1` JSON import/export and the research-pack | A file round-trip that a model had to format perfectly, then a human had to paste. | Typed MCP tools (`propose_buy`, `add_evidence`, …) that are validated on arrival. |
+| Kite Connect OAuth and read-only Kite account comparison | Kite Connect is a paid Zerodha developer product, against the free-forever rule. | Agents find prices and MTF requirements themselves; the owner confirms them against the Kite app in one click. |
 | Google sign-in and Google Drive backup | Sign-in is unnecessary for a local app; Drive consent is extra setup and risk. | `desk backup` / the Backup button writes a consistent SQLite copy to any folder you choose. Point it at a synced folder if you want an off-machine copy. |
 | Example breakout backtester and held-out strategy selection | Useful research, but it mixed historical testing into the decision desk and invited “proven strategy” readings. | Out of core. A future, separate read-only tool could expose backtests as evidence. |
 | 35 KB fixed checklist definitions and 24 KB tooltip text | One giant checklist for every trade, mostly manual ticks. | Per-strategy checklists that mix owner answers, evidence requirements and automatic rules. Explanations live next to each check. |
@@ -41,7 +50,7 @@ This page records what was removed, what was redone, what is new, and what was k
 - **Per-agent MCP keys** with Off / Read / Draft / Propose, daily write and request quotas, hourly call limits, expiry, revoke and re-key. Keys are shown once and stored only as hashes.
 - **Playbooks**: scheduled jobs in India time (once a day, or every N minutes in a window). The desk queues a task; the assigned model app takes it with `next_task`, follows the owner’s instructions and reports with `complete_task`. The desk never needs a model API key, so it stays free and model-independent.
 - **Pause all agents** switch, available from every page.
-- **Evidence with provenance**: broker price and MTF requirement can only come from the owner; news, candles, calendar and other evidence can come from agents and are always labelled *not verified*.
+- **Evidence with provenance**: agents can submit every kind of evidence with sources, always labelled *not verified*. Prices and MTF requirements count toward approval only when the owner typed them or confirmed an agent’s value against Kite (one click; freshness counts from the confirmation).
 - **Weekly loss pause**, **total open-risk limit** and **borrowed-money limit** checked on every buy.
 - **Ledger page** showing every change and whether the hash chain is intact.
 
@@ -57,10 +66,10 @@ This page records what was removed, what was redone, what is new, and what was k
 
 ## Not done yet (candidates, in rough order)
 
-1. **Read-only Kite Connect adapter** so broker prices, holdings and MTF requirements can arrive as *broker* evidence instead of pasted values. Keep reads allowlisted, no order endpoints.
-2. **Importer from v3**: read the v3 SQLite journal and emit `lot.opened` / `lot.sold` / `settings.changed` events with an `imported` marker. Never modify the v3 file.
+1. **Importer from v3**: read the v3 SQLite journal and emit `lot.opened` / `lot.sold` / `settings.changed` events with an `imported` marker. Never modify the v3 file.
+2. **Holdings check from a Kite export**: the owner downloads the free holdings/P&L CSV from Kite Console; the desk compares it with open lots and flags differences. No API.
 3. **Company actions** (split, bonus, consolidation) as reviewed events on open lots, as v3 had.
 4. **Phone approvals** over a private network, with the same PIN rule.
 5. **Streamable HTTP MCP transport** for model apps that cannot launch a local process.
-6. **NSE holiday calendar** so playbooks skip market holidays automatically.
-7. **Backtests as evidence**: a separate tool that never uses future candles, records its assumptions and attaches results as evidence, not as approval.
+6. **NSE holiday calendar** kept as a small editable file in the repo, so playbooks skip market holidays.
+7. **Backtests as evidence**: agents run their own analysis on candles they fetch; the desk records assumptions and results as evidence, never as approval, and never with future data.

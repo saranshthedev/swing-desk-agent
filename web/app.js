@@ -173,7 +173,7 @@ const pages = {
     return `<header class="page-head"><h1>Research</h1></header>
       <div class="cols">
         <div class="col-side">
-          <form class="card form" data-form="quote"><h2>Broker price</h2><p class="small muted">Copy the price from Kite now. It counts for 5 minutes.</p>
+          <form class="card form" data-form="quote"><h2>Broker price</h2><p class="small muted">Copy the price from Kite now, or confirm an agent’s price in the Evidence list. It counts for 5 minutes.</p>
             ${field('Stock', '<input name="symbol" required autocapitalize="characters">')}${field('Price ₹', num('price', '', 'required'))}
             <button class="btn primary">Save price</button></form>
           <form class="card form" data-form="funding"><h2>MTF requirement</h2><p class="small muted">From Kite’s MTF stock list, today. Counts for today only.</p>
@@ -276,6 +276,8 @@ function pendingRequest(i) {
     <p>In plain words: you put in ${money(sizing.ownCash)} of your own cash${sizing.borrowed > 0 ? ` and borrow ${money(sizing.borrowed)} (interest about ${money(sizing.interestPerDay)} a day)` : ''}. If the price falls to the stop you lose about ${money(sizing.riskAtStop)} including charges and a ${price(sizing.slipPerShare)}/share worse-price allowance. At the target you gain about ${money(sizing.rewardAtTarget)}.</p></section>` : '';
   return `${planCard}
     <section class="card"><h2>Checks</h2><ul class="rows">${ev.checks.map((c) => `<li><div>${tag(c.status)} <b>${esc(c.label)}</b>${c.required ? '' : ' <span class="muted small">(optional)</span>'}<div class="small muted">${esc(c.detail)}</div></div></li>`).join('')}</ul>
+      ${quoteFix ? agentFinding(i.symbol, 'quote') : ''}
+      ${fundingFix ? agentFinding(i.symbol, 'funding') : ''}
       ${quoteFix ? `<form class="form inline" data-form="quote" data-symbol="${esc(i.symbol)}">${field(`Price in Kite now for ${esc(i.symbol)} ₹`, num('price', '', 'required'))}<button class="btn">Save fresh price</button></form>` : ''}
       ${fundingFix ? `<form class="form inline" data-form="funding" data-symbol="${esc(i.symbol)}">${field('MTF own cash needed % (from Kite today)', num('marginPct', '', 'required min="1" max="100"'))}<button class="btn">Save requirement</button></form>` : ''}
     </section>
@@ -313,7 +315,20 @@ function evidenceFor(i) {
 
 function evidenceRow(e) {
   const value = e.kind === 'quote' ? price(e.price) : e.kind === 'funding' ? `${e.marginPct}% own cash` : esc(e.summary);
-  return `<li><div><b>${esc(e.symbol)}</b> <span class="tag tag-muted">${esc(e.kind)}</span> ${value}<div class="small muted">${byLine(e.by)} · observed ${when(e.observedAt)}</div>${sourcesList(e.sources)}</div></li>`;
+  return `<li><div><b>${esc(e.symbol)}</b> <span class="tag tag-muted">${esc(e.kind)}</span> ${value}<div class="small muted">${byLine(e.by)} · observed ${when(e.observedAt)}${e.confirms ? ' · confirmed against Kite' : ''}</div>${sourcesList(e.sources)}</div>${confirmButton(e)}</li>`;
+}
+
+/** Agent-found prices and MTF requirements count only after the owner checks them in Kite. */
+function confirmButton(e) {
+  if (!['quote', 'funding'].includes(e.kind) || e.by === 'owner') return '';
+  if (S.evidence.some((x) => x.confirms === e.id)) return '<span class="tag tag-ok">Confirmed</span>';
+  const label = e.kind === 'quote' ? `Kite shows ${price(e.price)} now` : `Kite needs ${e.marginPct}% today`;
+  return `<button class="btn" data-action="confirm-evidence" data-id="${esc(e.id)}">${label}: confirm</button>`;
+}
+
+function agentFinding(symbol, kind) {
+  const e = S.evidence.find((x) => x.symbol === symbol && x.kind === kind);
+  return e && e.by !== 'owner' && !S.evidence.some((x) => x.confirms === e.id) ? `<div class="confirm-row"><span class="small">${byLine(e.by)} found ${kind === 'quote' ? price(e.price) : `${e.marginPct}%`} at ${when(e.observedAt)}</span>${confirmButton(e)}</div>` : '';
 }
 
 function sourcesList(list) {
@@ -570,6 +585,7 @@ document.addEventListener('click', async (e) => {
     if (action === 'pause') { await act('automation.pause', {}); toast('All agents paused.'); }
     if (action === 'backup') { const r = await act('backup', {}); toast(`Backup written: ${r.file}`); }
     if (action === 'hide-key') delete drafts.newKey;
+    if (action === 'confirm-evidence') { await act('evidence.add', { confirms: el.dataset.id }); toast('Confirmed. It counts from now.'); }
     if (['add-item', 'remove-item', 'refresh-items'].includes(action)) {
       const form = el.closest('form');
       const s = readStrategy(form);

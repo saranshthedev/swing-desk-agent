@@ -8,7 +8,7 @@ Open the desk → **Agents & MCP** → *Add an agent*. Pick the lowest access th
 |---|---|
 | off | `whoami` only |
 | read | Read status, strategies, lots, requests, evidence, notes; run `calculate_plan`; take and finish playbook tasks |
-| draft | read + `add_note`, `add_evidence` (news, candles, calendar, other) |
+| draft | read + `add_note`, `add_evidence` (price, MTF requirement, news, candles, calendar, other) |
 | propose | draft + `propose_buy`, `propose_exit`, `propose_settings`, `withdraw_request` |
 
 No level can approve, place orders, change access, edit strategies or playbooks, or delete history.
@@ -37,6 +37,16 @@ If you changed the data folder with `SWING_DESK_DATA`, add the same variable her
 Keep the key out of anything you share. A model app that can also read your files or run
 shell commands can bypass MCP limits; give such apps a low level or no key.
 
+## Where information comes from
+
+The desk adds no data source of its own and never will use a paid one. Your model finds
+information with what its app can reach (web search, public exchange pages, company filings)
+and records it with `add_evidence`, always with sources and the time it was observed.
+
+Prices (`quote`) and MTF requirements (`funding`) are shown to the owner with a one-click
+**confirm** button. They count toward approval only after the owner checks Kite shows the same,
+and only for 5 minutes (prices) or the same India day (MTF) from that confirmation.
+
 ## 3. Automate with playbooks
 
 The desk does not run models. It queues tasks on a schedule; a model app takes them.
@@ -62,9 +72,10 @@ The desk does not run models. It queues tasks on a schedule; a model app takes t
 
 **Position watch (Read, every 30 min 09:15–15:30 IST)**
 
-> Call `list_lots`. For each open lot, compare the stop and target with the latest evidence from
-> `list_evidence`. Do not guess prices. Report anything that needs the owner’s attention in
-> `complete_task`; say “nothing to report” otherwise.
+> Call `list_lots`. For each open lot, look up the latest price from a public source, record it
+> with `add_evidence` (kind quote, with the source), and compare it with the stop and target.
+> Never guess a price. Report anything that needs the owner’s attention in `complete_task`;
+> say “nothing to report” otherwise. (Needs Draft access to record prices.)
 
 **Pre-market news (Draft, 08:45 IST)**
 
