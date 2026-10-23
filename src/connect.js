@@ -34,7 +34,7 @@ export function findClaude() {
   return null;
 }
 
-function runClaude(claude, args) {
+export function runClaude(claude, args) {
   // .cmd/.bat shims (npm global installs) need a shell on Windows; quote every argument then.
   if (/\.(cmd|bat)$/i.test(claude)) {
     // Node runs this as cmd /d /s /c "<line>"; /s strips only that outer pair, keeping our quotes.
@@ -44,7 +44,7 @@ function runClaude(claude, args) {
   return spawnSync(claude, args, { encoding: 'utf8', windowsHide: true });
 }
 
-function prompter() {
+export function prompter() {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: !!process.stdin.isTTY });
   let muted = false;
   rl._writeToOutput = (s) => { if (!muted) rl.output.write(s); };
@@ -63,8 +63,9 @@ function prompter() {
   };
 }
 
-export async function connect(store, { dataDirOverride } = {}) {
-  const p = prompter();
+/** Pass `p` (a shared prompter) when called from another flow; it is then left open. */
+export async function connect(store, { dataDirOverride, p: shared } = {}) {
+  const p = shared ?? prompter();
   try {
     console.log('Connect Swing Desk to Claude Code\n');
     const claude = findClaude();
@@ -106,7 +107,7 @@ export async function connect(store, { dataDirOverride } = {}) {
         console.log('\nNext:');
         console.log('  1. Start a new Claude Code conversation (or reload VS Code) and run /mcp to see it connected.');
         console.log('  2. Ask: "Use swing-desk: call whoami and list_strategies."');
-        console.log('  3. Keep `npm start` running to approve requests at http://127.0.0.1:8790');
+        console.log('  3. Keep the desk running (start.cmd or `npm start`) to approve requests at http://127.0.0.1:8790');
         return;
       }
       console.log(`\nClaude Code could not add the server:\n${(added.stderr || added.stdout).trim()}`);
@@ -114,6 +115,6 @@ export async function connect(store, { dataDirOverride } = {}) {
     console.log('\nRun this yourself (it contains the agent key; do not share it):\n');
     console.log(['claude', ...addArgs].map((a) => (/[\s"]/.test(a) ? `"${a}"` : a)).join(' '));
   } finally {
-    p.close();
+    if (!shared) p.close();
   }
 }

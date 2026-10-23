@@ -13,6 +13,9 @@ import { scheduleTick } from '../core/schedule.js';
 import { SETTING_RULES, UserError } from '../core/settings.js';
 import { EVIDENCE_KINDS } from '../core/evidence.js';
 import { RULES } from '../core/strategies.js';
+import { LIBRARY_GROUPS, SOURCES, STAGES, RESEARCH_VALID_DAYS, MARKET } from '../core/checklist-library.js';
+import { researchStatus } from '../core/rules.js';
+import { RISK_PRESETS, AGENT_PRESETS, PLAYBOOK_TEMPLATES, PLAN_DEFAULTS, matchRiskPreset } from '../core/presets.js';
 import { newId } from '../store/store.js';
 import { backupDir } from '../config.js';
 
@@ -42,6 +45,8 @@ const ACTIONS = {
     return { id: body.id, key: store.issueKey(body.id) };
   }],
   'strategy.save': [true, owner(C.saveStrategy)],
+  'research.save': [false, owner(C.saveResearch)],
+  'research.status': [false, (store, body) => store.read((s, now) => researchStatus(s, String(body.symbol ?? '').trim().toUpperCase(), body.strategyId, now))],
   'playbook.save': [true, owner(C.savePlaybook)],
   'evidence.add': [false, owner(C.addEvidence)],
   'note.add': [false, owner(C.addNote)],
@@ -79,6 +84,14 @@ export function stateView(store) {
       settingRules: SETTING_RULES,
       evidenceKinds: EVIDENCE_KINDS,
       ruleKinds: Object.keys(RULES),
+      checklist: { groups: LIBRARY_GROUPS, sources: SOURCES, stages: STAGES, researchValidDays: RESEARCH_VALID_DAYS, market: MARKET },
+      presets: {
+        risk: RISK_PRESETS,
+        currentRisk: matchRiskPreset(s.settings),
+        agents: AGENT_PRESETS,
+        playbooks: PLAYBOOK_TEMPLATES,
+        plan: PLAN_DEFAULTS,
+      },
       // What a model app needs to launch the MCP server against this same database.
       mcp: { command: process.execPath, args: [BIN, 'mcp'], ...(process.env.SWING_DESK_DATA ? { env: { SWING_DESK_DATA: process.env.SWING_DESK_DATA } } : {}) },
     },
@@ -178,5 +191,14 @@ export function startServer(store, { port }) {
   tick();
   const timer = setInterval(tick, 30_000);
   server.on('close', () => clearInterval(timer));
-  return new Promise((ok) => server.listen(port, '127.0.0.1', () => ok(server)));
+  return new Promise((ok, fail) => {
+    server.once('error', (err) => {
+      clearInterval(timer);
+      if (err.code !== 'EADDRINUSE') return fail(err);
+      const busy = new UserError(`Port ${port} is already in use. Swing Desk may already be running in another window: open http://127.0.0.1:${port}. Or stop the other one with Ctrl + C.`);
+      busy.code = 'PORT_IN_USE';
+      fail(busy);
+    });
+    server.listen(port, '127.0.0.1', () => ok(server));
+  });
 }

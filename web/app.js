@@ -1,5 +1,8 @@
 // Swing Desk Agent – owner web app. Plain ES module, no build step, no dependencies.
 
+import { INFO, INFO_IN } from './info.js';
+import { checklistHtml, libraryHtml, strategyItemsHtml, toStrategyItem, groupName } from './checklist-ui.js';
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const main = $('#main');
 let csrf = '';
@@ -100,7 +103,63 @@ function read(form) {
   return out;
 }
 
-const field = (label, input, hint = '') => `<label class="field"><span>${label}</span>${input}${hint ? `<small>${hint}</small>` : ''}</label>`;
+let fieldSeq = 0;
+/** A labelled control. Its “i” help button is added by addInfoButtons() from the control’s name. */
+const field = (label, input, hint = '') => {
+  const id = `f${++fieldSeq}`;
+  const control = input.replace(/<(input|select|textarea)\b/, `<$1 id="${id}"`);
+  return `<div class="field"><div class="field-label"><label for="${id}">${label}</label></div>${control}${hint ? `<small>${hint}</small>` : ''}</div>`;
+};
+
+/**
+ * Add an “i” button to every field (and every element with data-info) that has help text.
+ * Help comes from INFO_IN[form][name], else INFO[name]. Click, tap or Enter opens it; Escape closes.
+ */
+function addInfoButtons(root) {
+  const targets = [
+    ...[...root.querySelectorAll('.field')].map((f) => {
+      const control = f.querySelector('input, select, textarea');
+      return { host: f.querySelector('.field-label'), after: f.querySelector('.field-label'), key: control?.name || control?.dataset.item, form: control?.closest('form')?.dataset.form, label: f.querySelector('label')?.textContent };
+    }),
+    ...[...root.querySelectorAll('[data-info]')].map((el) => {
+      const head = el.querySelector('legend, h2, h3') ?? el;
+      return { host: head, after: head, key: el.dataset.info, form: el.closest('form')?.dataset.form, label: head.textContent };
+    }),
+  ];
+  for (const t of targets) {
+    const text = (t.form && INFO_IN[t.form]?.[t.key]) ?? INFO[t.key];
+    if (!t.host || !text || t.host.querySelector('.info')) continue;
+    const tipId = `tip-${++fieldSeq}`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'info';
+    button.textContent = 'i';
+    button.setAttribute('aria-label', `What is “${(t.label || t.key).trim()}”?`);
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', tipId);
+    const tip = document.createElement('p');
+    tip.className = 'tip';
+    tip.id = tipId;
+    tip.hidden = true;
+    tip.textContent = text;
+    t.host.append(button);
+    t.after.after(tip);
+  }
+}
+
+function toggleInfo(button, open = button.getAttribute('aria-expanded') !== 'true') {
+  button.setAttribute('aria-expanded', String(open));
+  document.getElementById(button.getAttribute('aria-controls')).hidden = !open;
+}
+
+document.addEventListener('click', (e) => {
+  const button = e.target.closest('button.info');
+  if (button) toggleInfo(button);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  for (const b of document.querySelectorAll('button.info[aria-expanded="true"]')) toggleInfo(b, false);
+});
 const num = (name, value = '', attrs = '') => `<input name="${name}" type="number" step="any" inputmode="decimal" data-num value="${esc(value)}" ${attrs}>`;
 const pinField = () => field('Approval PIN', '<input name="pin" type="password" inputmode="numeric" autocomplete="off" required minlength="6" maxlength="12">');
 const options = (list, selected) => list.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(selected) ? 'selected' : ''}>${esc(l)}</option>`).join('');
@@ -162,7 +221,10 @@ const pages = {
 
   plan() {
     const strategies = S.strategies.filter((s) => s.enabled);
-    const d = drafts.plan ?? { exchange: 'NSE', buyType: 'mtf', fundingMode: fundingMode(), fundingValue: fundingMode() === 'cash' ? 50 : 2, days: 10, strategyId: strategies[0]?.id };
+    const first = strategies[0]?.id;
+    const pd = S.meta.presets.plan[first] ?? S.meta.presets.plan.default;
+    const lev2 = pd.leverage ?? 2;
+    const d = drafts.plan ?? { exchange: 'NSE', buyType: pd.buyType, fundingMode: fundingMode(), fundingValue: fundingMode() === 'cash' ? trim(100 / lev2) : lev2, days: pd.days, strategyId: first };
     return `<header class="page-head"><h1>New plan</h1></header>
       <p class="lead">Your own plan goes through the same checks as an agent’s. Leave shares blank and the desk sizes it from your limits.</p>
       <form class="card form" data-form="plan">
@@ -224,7 +286,53 @@ const pages = {
     return `<header class="page-head"><h1>Strategies</h1><a class="btn primary" href="#/strategies/new">New strategy</a></header>
       <p class="lead">Each strategy has its own checklist. Every buy must name one. The built-in strategies are starting templates, not recommendations.</p>
       ${S.strategies.map((s) => `<section class="card"><div class="card-head"><h2>${esc(s.name)} <span class="tag tag-muted">v${s.version}</span>${s.enabled ? '' : ' <span class="tag tag-muted">off</span>'}</h2><a href="#/strategies/${esc(s.id)}">Edit</a></div>
-        <p class="muted">${esc(s.description)}</p><ul class="checklist">${s.items.map((it) => `<li><span class="tag tag-muted">${it.type === 'attest' ? 'You answer' : it.type === 'evidence' ? `Evidence: ${esc(it.kind)}` : 'Rule'}</span> ${esc(it.label)}${it.required ? '' : ' <span class="muted">(optional)</span>'}</li>`).join('')}</ul></section>`).join('')}`;
+        <p class="muted">${esc(s.description)} · ${s.items.length} checks · <a href="#/prepare/${esc(s.id)}">Prepare a stock</a></p>${strategyItemsHtml(s.items, { checklist: S.meta.checklist, esc })}</section>`).join('')}`;
+  },
+
+  checklist() {
+    const c = S.meta.checklist;
+    const count = c.groups.reduce((a, g) => a + g.items.length, 0);
+    return `<header class="page-head"><div><h1>Pre-trade checklist</h1><p class="muted">${c.groups.length} groups · ${count} checks</p></div>
+      <div class="actions"><button class="btn" data-action="copy-complete">Make my own strategy from this list</button></div></header>
+      <p class="lead">Everything worth looking at before a swing trade, in two stages. <b>Research</b> can be done 1–5 days before. <b>On the day</b> must be checked just before buying. Strategies pick from this list. Nothing here is advice.</p>
+      <p class="small muted">Whole-market checks (Nifty, VIX, US and Asian markets, crude oil, USDINR, FII/DII) are saved once a day under the name <b>${esc(c.market)}</b> and count for every stock.</p>
+      ${libraryHtml(c, { esc })}
+      <section class="card"><h2>Free places to look</h2><ul class="rows">${Object.values(c.sources).map(([name, url]) => `<li><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)}</a></li>`).join('')}</ul></section>`;
+  },
+
+  prepare(strategyId, symbol) {
+    const strategies = S.strategies.filter((s) => s.enabled);
+    const sid = strategyId || strategies[0]?.id;
+    const sym = (symbol || '').toUpperCase();
+    const key = `${sid}|${sym}`;
+    let body = '<p class="muted">Enter a stock and choose a strategy to see its research checklist.</p>';
+    if (sym) {
+      const cached = drafts.prepare?.key === key ? drafts.prepare.data : null;
+      if (!cached) {
+        loadPrepare(sid, sym, key);
+        body = '<p class="muted">Loading…</p>';
+      } else {
+        const research = cached.checks.filter((c) => c.stage === 'research');
+        const today = cached.checks.filter((c) => c.stage !== 'research');
+        body = `<form class="card form" data-form="research" data-strategy="${esc(sid)}" data-symbol="${esc(sym)}">
+            <div class="card-head"><h2>${esc(sym)} · ${esc(cached.strategyName)}</h2>${cached.researchDone ? '<span class="tag tag-ok">Research done</span>' : '<span class="tag tag-ask">Research not finished</span>'}</div>
+            <p class="small">Tick what you checked. Your answers count for ${S.meta.checklist.researchValidDays} days for this stock and strategy. Evidence comes from you or Claude (Research page).</p>
+            ${checklistHtml(research, { checklist: S.meta.checklist, esc, tag, answer: 'research' })}
+            <button class="btn primary">Save research</button>
+          </form>
+          <section class="card"><h2>Later, on the day</h2><p class="small muted">These are checked just before buying, on the request page. Shown here so you know what is coming.</p>
+            ${checklistHtml(today, { checklist: S.meta.checklist, esc, tag })}</section>
+          <section class="card"><h2>Let Claude do the research</h2><p class="small">Ask Claude Code:</p>
+            <pre class="code">Use swing-desk. Call get_research_status for ${esc(sym)} with strategy ${esc(sid)}. For every item that is not passing, research it with free sources and save it with add_evidence (whole-market checks under MARKET), with links. Then tell me what you found and what I still need to check myself.</pre></section>`;
+      }
+    }
+    return `<header class="page-head"><div><h1>Prepare a trade</h1><p class="muted">Stage 1: research, 1–5 days before you buy.</p></div></header>
+      <form class="card form inline" data-form="prepare-pick">
+        ${field('Stock', `<input name="symbol" required autocapitalize="characters" value="${esc(sym)}">`)}
+        ${field('Strategy', `<select name="strategyId">${options(strategies.map((s) => [s.id, s.name]), sid)}</select>`)}
+        <button class="btn primary">Show checklist</button>
+      </form>
+      ${body}`;
   },
 
   playbooks(id) {
@@ -246,8 +354,10 @@ const pages = {
         <td>${a.revoked ? '' : `<details><summary class="btn">Change</summary><form class="form" data-form="agent-update"><input type="hidden" name="id" value="${esc(a.id)}">${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), a.scope)}</select>`)}${field('Requests per day', num('intentsPerDay', a.limits.intentsPerDay, 'step="1" min="0"'))}${field('Writes per day', num('writesPerDay', a.limits.writesPerDay, 'step="1" min="0"'))}${field('Calls per hour', num('callsPerHour', a.limits.callsPerHour, 'step="1" min="0"'))}${field('Revoke this key', '<input type="checkbox" name="revoked">')}${pinField()}<div class="actions"><button class="btn primary">Save</button><button class="btn" name="rekey" value="1">New key</button></div></form></details>`}</td></tr>`; }).join('')}
         </tbody></table></div>` : '<p class="muted">No agents yet.</p>'}</section>
       <form class="card form" data-form="agent-add"><h2>Add an agent</h2>
-        <div class="grid">${field('Name', '<input name="name" required placeholder="Research agent">')}${field('App', '<input name="client" placeholder="Claude Desktop">')}
-        ${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), 'off')}</select>`)}${field('Key lifetime (days)', num('expiresDays', 30, 'step="1" min="1" max="365"'))}</div>
+        ${field('Start from', `<select name="agentPreset">${options([...Object.entries(S.meta.presets.agents).map(([k, p]) => [k, `${p.label} – ${p.about}`]), ['custom', 'Custom – choose everything yourself']], 'researcher')}</select>`)}
+        <div class="grid">${field('Name', '<input name="name" required placeholder="Claude research">')}${field('App', '<input name="client" placeholder="Claude Code">')}
+        ${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), S.meta.presets.agents.researcher.scope)}</select>`)}${field('Key lifetime (days)', num('expiresDays', 30, 'step="1" min="1" max="365"'))}
+        ${field('Requests per day', num('intentsPerDay', S.meta.presets.agents.researcher.limits.intentsPerDay, 'step="1" min="0"'))}${field('Writes per day', num('writesPerDay', S.meta.presets.agents.researcher.limits.writesPerDay, 'step="1" min="0"'))}${field('Calls per hour', num('callsPerHour', S.meta.presets.agents.researcher.limits.callsPerHour, 'step="1" min="0"'))}</div>
         <ul class="small muted">${Object.entries(SCOPE_HELP).map(([k, v]) => `<li><b>${k}</b>: ${v}</li>`).join('')}</ul>
         ${pinField()}<button class="btn primary">Create agent and key</button></form>
       <section class="card"><h2>Recent MCP calls</h2>${S.calls.length ? `<ul class="rows">${S.calls.map((c) => `<li><span>${esc(S.agents.find((a) => a.id === c.agent_id)?.name ?? c.agent_id)} · <code>${esc(c.tool)}</code> ${c.ok ? '' : `<span class="tag tag-bad">${esc(c.error)}</span>`}</span><span class="small muted">${when(c.at)}</span></li>`).join('')}</ul>` : '<p class="muted">No calls yet.</p>'}</section>`;
@@ -265,6 +375,14 @@ const pages = {
       ${S.pinSet ? '' : '<section class="card highlight"><h2>Set your approval PIN first</h2><p>Approvals, agent access, strategies and playbooks need this PIN. Keep it out of any model app’s reach.</p></section>'}
       ${S.status.automationPaused ? `<form class="card form highlight" data-form="resume"><h2>Agents are paused</h2><p>Resuming lets connected agents call the desk again.</p>${pinField()}<button class="btn primary">Resume agents</button></form>` : ''}
       <form class="card form" data-form="settings"><h2>Risk limits</h2><p class="small muted">Changing these never changes past trades.</p>
+        <fieldset class="presets" data-info="preset"><legend>Start from</legend>
+          <p class="small muted">Your saved limits: <b>${esc(S.meta.presets.currentRisk ? S.meta.presets.risk[S.meta.presets.currentRisk].label : 'Custom')}</b>. These are examples, not advice.</p>
+          <div class="preset-grid">
+            ${[...Object.entries(S.meta.presets.risk).map(([k, p]) => [k, p.label, p.about]), ['custom', 'Custom', 'Type your own numbers below.']].map(([k, label, about]) => `
+              <label class="preset"><input type="radio" name="preset" value="${k}" ${(S.meta.presets.currentRisk ?? 'custom') === k ? 'checked' : ''}><span><b>${esc(label)}</b><small>${esc(about)}</small></span></label>`).join('')}
+          </div>
+          <p class="small muted">Picking one fills the boxes below using your trading capital. Nothing is saved until you click Save limits.</p>
+        </fieldset>
         <div class="grid">${Object.entries(S.meta.settingRules).map(([k, r]) => field(esc(r.label), num(k, st[k], `min="${r.min}" max="${r.max}"`))).join('')}</div>
         ${pinField()}<button class="btn primary">Save limits</button></form>
       <form class="card form" data-form="pin"><h2>${S.pinSet ? 'Change' : 'Set'} approval PIN</h2>
@@ -294,19 +412,21 @@ function pendingRequest(i) {
   const sizing = ev.sizing;
   const quoteFix = ev.checks.some((c) => c.id === 'quote' && c.status !== 'pass');
   const fundingFix = ev.checks.some((c) => c.id === 'funding' && c.status !== 'pass');
-  const attest = ev.checks.filter((c) => c.status === 'ask');
+  const desk = ev.checks.filter((c) => !c.id.startsWith('item:'));
+  const items = ev.checks.filter((c) => c.id.startsWith('item:'));
   const planCard = sizing ? `<section class="card"><h2>The plan, recalculated by the desk</h2><p class="small muted">The agent’s numbers are not trusted. Size and charges come from your saved limits.</p>
     <div class="stats">${[['Entry', price(ev.plan.entry)], ['Stop', price(ev.plan.stop)], ['Target', price(ev.plan.target)], ['Shares', sizing.qty], ['Type', ev.plan.buyType === 'mtf' ? `MTF ${funding(ev.plan.marginPct)}` : 'Regular'], ['Hold up to', `${ev.plan.days} days`], ['Loss at stop', money(sizing.riskAtStop)], ['Gain at target', money(sizing.rewardAtTarget)]].map(([k, v]) => `<div><span>${k}</span><b class="mono">${v}</b></div>`).join('')}</div>
     <p>In plain words: you put in ${money(sizing.ownCash)} of your own cash${sizing.borrowed > 0 ? ` and borrow ${money(sizing.borrowed)} (interest about ${money(sizing.interestPerDay)} a day)` : ''}. If the price falls to the stop you lose about ${money(sizing.riskAtStop)} including charges and a ${price(sizing.slipPerShare)}/share worse-price allowance. At the target you gain about ${money(sizing.rewardAtTarget)}.</p></section>` : '';
   return `${planCard}
-    <section class="card"><h2>Checks</h2><ul class="rows">${ev.checks.map((c) => `<li><div>${tag(c.status)} <b>${esc(c.label)}</b>${c.required ? '' : ' <span class="muted small">(optional)</span>'}<div class="small muted">${esc(c.detail)}</div></div></li>`).join('')}</ul>
+    <section class="card"><h2>Checks the app makes</h2><ul class="rows">${desk.map((c) => `<li><div>${tag(c.status)} <b>${esc(c.label)}</b>${c.required ? '' : ' <span class="muted small">(optional)</span>'}<div class="small muted">${esc(c.detail)}</div></div></li>`).join('')}</ul>
       ${quoteFix ? agentFinding(i.symbol, 'quote') : ''}
       ${fundingFix ? agentFinding(i.symbol, 'funding') : ''}
       ${quoteFix ? `<form class="form inline" data-form="quote" data-symbol="${esc(i.symbol)}">${field(`Price in Kite now for ${esc(i.symbol)} ₹`, num('price', '', 'required'))}<button class="btn">Save fresh price</button></form>` : ''}
       ${fundingFix ? `<form class="form inline" data-form="funding" data-symbol="${esc(i.symbol)}">${fundingFields('MTF limit from Kite today, as', fundingMode())}<button class="btn">Save requirement</button></form>` : ''}
     </section>
-    <form class="card form" data-form="approve" data-id="${esc(i.id)}"><h2>Your decision</h2>
-      ${attest.length ? `<fieldset><legend>Answer the checklist yourself</legend>${attest.map((c) => `<label class="check"><input type="checkbox" name="answer:${esc(c.id.slice(5))}"> <span>${esc(c.label)}</span></label>`).join('')}</fieldset>` : ''}
+    <form class="card form" data-form="approve" data-id="${esc(i.id)}"><h2>Strategy checklist and your decision</h2>
+      ${items.length ? `<p class="small">Tick each “Your answer” item only if it is really true. Research you already did on the <a href="#/prepare/${esc(i.strategyId)}/${esc(i.symbol)}">Prepare page</a> counts for ${S.meta.checklist.researchValidDays} days.</p>
+      ${checklistHtml(items, { checklist: S.meta.checklist, esc, tag, answer: 'ask' })}` : ''}
       <p class="small">Approving saves your decision and gives you an order ticket. You place the order yourself in Kite.</p>
       ${pinField()}
       <div class="actions"><button class="btn primary">Approve</button></div>
@@ -395,13 +515,19 @@ function strategyEditor(id) {
   return `<header class="page-head"><div><a href="#/strategies">Back to strategies</a><h1>${id === 'new' ? 'New strategy' : `Edit ${esc(base.name)}`}</h1></div></header>
     <p class="lead">Saving creates a new version. Requests made against the old version can no longer be approved.</p>
     <form class="card form" data-form="strategy" data-key="${esc(id)}">
+      ${id === 'new' ? field('Start from', `<select name="copyFrom">${options([['', 'Blank checklist'], ...S.strategies.map((s) => [s.id, `Copy of ${s.name}`])], d.copyFrom ?? '')}</select>`, 'Copies the checklist so you can change it. The original stays as it is.') : ''}
       <div class="grid">${field('Id (letters, digits, dashes)', `<input name="id" required value="${esc(d.id)}" ${id === 'new' ? '' : 'readonly'}>`)}${field('Name', `<input name="name" required value="${esc(d.name)}">`)}</div>
       ${field('Description', `<input name="description" value="${esc(d.description)}">`)}
       <label class="check"><input type="checkbox" name="enabled" ${d.enabled ? 'checked' : ''}> <span>Agents can use this strategy</span></label>
-      <h2>Checklist</h2>
-      ${d.items.map((it, n) => `<fieldset class="item-row"><legend>Item ${n + 1}</legend><div class="grid">
+      <h2>Checklist <span class="small muted">${d.items.length} items</span></h2>
+      ${field('Add from checklist library', `<select name="libraryPick"><option value="">Choose a check or a whole group…</option>${S.meta.checklist.groups.map((g) => `<optgroup label="${esc(g.title)}"><option value="group:${esc(g.id)}">➕ All ${g.items.length} checks in “${esc(g.title)}”</option>${g.items.map((i) => `<option value="item:${esc(i.id)}" ${d.items.some((x) => x.id === i.id) ? 'disabled' : ''}>${esc(i.label)}</option>`).join('')}</optgroup>`).join('')}</select>`, 'Already added checks are greyed out.')}
+      ${d.items.map((it, n) => `<fieldset class="item-row"><legend>Item ${n + 1}${it.group ? ` · ${esc(groupName(it.group, S.meta.checklist))}` : ''}</legend><div class="grid">
         ${field('Id', `<input data-item="id" value="${esc(it.id)}" required>`)}
         ${field('Type', `<select data-item="type">${options([['attest', 'You answer yes/no'], ['evidence', 'Needs evidence'], ['rule', 'Fixed rule']], it.type)}</select>`)}
+        ${field('Group', `<select data-item="group">${options([['', 'No group'], ...S.meta.checklist.groups.map((g) => [g.id, g.title]), ...(it.group && !S.meta.checklist.groups.some((g) => g.id === it.group) ? [[it.group, it.group]] : [])], it.group ?? '')}</select>`)}
+        ${field('When', `<select data-item="stage">${options([['research', 'Research (1–5 days before)'], ['before', 'Just before buying']], it.stage ?? 'before')}</select>`)}
+        ${it.type === 'evidence' ? field('Evidence for', `<select data-item="scope">${options([['stock', 'This stock'], ['market', 'Whole market (MARKET)']], it.scope ?? 'stock')}</select>`) : ''}
+        <input type="hidden" data-item="help" value="${esc(it.help ?? '')}">
         ${it.type === 'rule' ? field('Rule', `<select data-item="rule">${options(S.meta.ruleKinds.map((r) => [r, r]), it.rule)}</select>`) + field('Value', `<input data-item="value" value="${esc(it.value ?? '')}">`, 'regularOnly: true') : field('Label', `<input data-item="label" value="${esc(it.label)}" required>`)}
         ${it.type === 'evidence' ? field('Evidence kind', `<select data-item="kind">${options(kinds.map((k) => [k, k]), it.kind)}</select>`) + field('Max age (days, 0 = today)', `<input data-item="maxAgeDays" type="number" min="0" max="30" step="1" value="${esc(it.maxAgeDays ?? 0)}">`) : ''}
         ${it.type !== 'rule' ? field('Required', `<input type="checkbox" data-item="required" ${it.required !== false ? 'checked' : ''}>`) : ''}
@@ -427,16 +553,22 @@ function readStrategy(form) {
 }
 
 function playbookEditor(id) {
-  const base = id === 'new' ? { name: '', agentId: S.agents[0]?.id ?? '', schedule: { days: [1, 2, 3, 4, 5], at: '15:50' }, instructions: '', maxIntents: 0, enabled: true } : S.playbooks.find((p) => p.id === id);
+  const templates = S.meta.presets.playbooks;
+  const chosen = id === 'new' ? (drafts.playbookTemplate ?? 'news') : null;
+  const t = templates[chosen];
+  const base = id === 'new'
+    ? { name: t?.name ?? '', agentId: S.agents.find((a) => !a.revoked)?.id ?? '', schedule: structuredClone(t?.schedule ?? { days: [1, 2, 3, 4, 5], at: '15:50' }), instructions: t?.instructions ?? '', maxIntents: t?.maxIntents ?? 0, enabled: true }
+    : S.playbooks.find((p) => p.id === id);
   if (!base) return '<p>Playbook not found.</p>';
   const s = base.schedule;
   return `<header class="page-head"><div><a href="#/playbooks">Back to playbooks</a><h1>${id === 'new' ? 'New playbook' : `Edit ${esc(base.name)}`}</h1></div></header>
     <form class="card form" data-form="playbook" data-id="${id === 'new' ? '' : esc(id)}">
+      ${id === 'new' ? field('Start from', `<select name="template">${options([...Object.entries(templates).map(([k, p]) => [k, p.label]), ['blank', 'Blank – write your own']], chosen)}</select>`, 'Fills everything below. You can change any of it.') : ''}
       <div class="grid">${field('Name', `<input name="name" required value="${esc(base.name)}">`)}
       ${field('Run by', `<select name="agentId">${options([['', 'Nobody (off)'], ...S.agents.filter((a) => !a.revoked).map((a) => [a.id, `${a.name} (${a.scope})`])], base.agentId)}</select>`)}
       ${field('Requests allowed per run', num('maxIntents', base.maxIntents, 'step="1" min="0" max="20"'), 'Only agents with Propose access can send requests.')}</div>
       <fieldset><legend>Days</legend>${DAYS.map((d, n) => `<label class="check inline"><input type="checkbox" name="day${n}" ${s.days.includes(n) ? 'checked' : ''}> <span>${d}</span></label>`).join('')}</fieldset>
-      <fieldset><legend>When (India time)</legend>
+      <fieldset data-info="mode"><legend>When (India time)</legend>
         <label class="check"><input type="radio" name="mode" value="at" ${s.every ? '' : 'checked'}> <span>Once a day at</span> <input name="at" value="${esc(s.at ?? '15:50')}" pattern="[0-2][0-9]:[0-5][0-9]" size="5"></label>
         <label class="check"><input type="radio" name="mode" value="every" ${s.every ? 'checked' : ''}> <span>Every</span> <input name="every" type="number" data-num min="5" max="240" step="1" value="${esc(s.every ?? 15)}"> <span>minutes from</span> <input name="from" value="${esc(s.from ?? '09:15')}" size="5"> <span>to</span> <input name="to" value="${esc(s.to ?? '15:30')}" size="5"></label>
       </fieldset>
@@ -444,6 +576,21 @@ function playbookEditor(id) {
       <label class="check"><input type="checkbox" name="enabled" ${base.enabled ? 'checked' : ''}> <span>On</span></label>
       ${pinField()}<button class="btn primary">Save playbook</button>
     </form>`;
+}
+
+/** Fetch a stock’s checklist status for the Prepare page, then redraw if still on it. */
+async function loadPrepare(strategyId, symbol, key) {
+  if (loadPrepare.pending === key) return;
+  loadPrepare.pending = key;
+  try {
+    const r = await api('/api/action/research.status', { method: 'POST', body: JSON.stringify({ strategyId, symbol }) });
+    drafts.prepare = { key, data: r.result };
+    if (location.hash.startsWith('#/prepare')) render();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    loadPrepare.pending = null;
+  }
 }
 
 async function loadLedger() {
@@ -542,7 +689,10 @@ const forms = {
     toast('Stop moved.');
   },
   async 'agent-add'(form, data) {
-    const r = await act('agent.add', data);
+    const r = await act('agent.add', {
+      name: data.name, client: data.client, scope: data.scope, expiresDays: data.expiresDays, pin: data.pin,
+      limits: { intentsPerDay: data.intentsPerDay, writesPerDay: data.writesPerDay, callsPerHour: data.callsPerHour },
+    });
     drafts.newKey = { name: data.name, key: r.key };
   },
   async 'agent-update'(form, data, submitter) {
@@ -566,14 +716,25 @@ const forms = {
     const schedule = data.mode === 'every' ? { days, every: data.every, from: data.from, to: data.to } : { days, at: data.at };
     await act('playbook.save', { id: form.dataset.id || undefined, name: data.name, agentId: data.agentId || null, maxIntents: data.maxIntents, schedule, instructions: data.instructions, enabled: data.enabled, pin: data.pin });
     toast('Playbook saved.');
+    delete drafts.playbookTemplate;
     location.hash = '#/playbooks';
   },
   async settings(form, data) {
-    const { pin, ...values } = data;
+    const { pin, preset, ...values } = data;
     const patch = Object.fromEntries(Object.entries(values).filter(([k, v]) => v !== undefined && v !== S.status.settings[k]));
     if (!Object.keys(patch).length) return toast('Nothing changed.');
     await act('settings.change', { patch, pin });
     toast('Limits saved.');
+  },
+  async 'prepare-pick'(form, data) {
+    location.hash = `#/prepare/${encodeURIComponent(data.strategyId)}/${encodeURIComponent(data.symbol.trim().toUpperCase())}`;
+  },
+  async research(form, data) {
+    const answers = Object.fromEntries(Object.entries(data).filter(([k]) => k.startsWith('answer:')).map(([k, v]) => [k.slice(7), v]));
+    if (!Object.keys(answers).length) return toast('This strategy has no research items to tick.');
+    await act('research.save', { symbol: form.dataset.symbol, strategyId: form.dataset.strategy, answers });
+    drafts.prepare = null;
+    toast(`Research saved. It counts for ${S.meta.checklist.researchValidDays} days.`);
   },
   async resume(form, data) {
     await act('automation.resume', { pin: data.pin });
@@ -609,6 +770,12 @@ document.addEventListener('click', async (e) => {
     if (action === 'pause') { await act('automation.pause', {}); toast('All agents paused.'); }
     if (action === 'backup') { const r = await act('backup', {}); toast(`Backup written: ${r.file}`); }
     if (action === 'hide-key') delete drafts.newKey;
+    if (action === 'copy-complete') {
+      const src = S.strategies.find((s) => s.id === 'complete');
+      drafts.strategy = { key: 'new', value: { ...structuredClone(src), id: 'my-checklist', name: 'My checklist', copyFrom: 'complete' } };
+      location.hash = '#/strategies/new';
+      return;
+    }
     if (action === 'confirm-evidence') { await act('evidence.add', { confirms: el.dataset.id }); toast('Confirmed. It counts from now.'); }
     if (['add-item', 'remove-item', 'refresh-items'].includes(action)) {
       const form = el.closest('form');
@@ -631,10 +798,91 @@ document.addEventListener('change', (e) => {
     const mode = e.target.value;
     const v = Number(box.querySelector('[name=fundingValue]').value);
     try { localStorage.setItem('fundingMode', mode); } catch { /* preference only */ }
+    const form = box.closest('form');
     box.outerHTML = fundingFields(box.dataset.label, mode, v > 0 ? trim(100 / v) : '');
-    document.querySelector('[data-funding] [name=fundingMode]')?.focus();
+    addInfoButtons(form);
+    form.querySelector('[data-funding] [name=fundingMode]')?.focus();
   }
   if (e.target.name === 'buyType') syncFunding(e.target.form);
+  const form = e.target.form;
+  if (form?.dataset.form === 'plan' && e.target.name === 'strategyId') applyPlanDefaults(form, e.target.value);
+  if (form?.dataset.form === 'settings' && e.target.name === 'preset' && e.target.value !== 'custom') applyRiskPreset(form, e.target.value);
+  if (form?.dataset.form === 'agent-add' && e.target.name === 'agentPreset') applyAgentPreset(form, e.target.value);
+  if (form?.dataset.form === 'playbook' && e.target.name === 'template') { drafts.playbookTemplate = e.target.value; render(); }
+  if (form?.dataset.form === 'strategy' && e.target.name === 'libraryPick' && e.target.value) {
+    const s = readStrategy(form);
+    const [kind, id] = e.target.value.split(':');
+    const group = S.meta.checklist.groups.find((g) => (kind === 'group' ? g.id === id : g.items.some((i) => i.id === id)));
+    const picked = kind === 'group' ? group.items : group.items.filter((i) => i.id === id);
+    const added = picked.filter((i) => !s.items.some((x) => x.id === i.id)).map((i) => toStrategyItem(i, group.id));
+    s.items.push(...added);
+    drafts.strategy = { key: form.dataset.key, value: { ...s, copyFrom: drafts.strategy?.value?.copyFrom } };
+    render();
+    toast(added.length ? `Added ${added.length} check(s). Review them below, then save.` : 'Those checks are already in this strategy.');
+  }
+  if (form?.dataset.form === 'strategy' && e.target.name === 'copyFrom') {
+    const src = S.strategies.find((s) => s.id === e.target.value);
+    drafts.strategy = src ? { key: 'new', value: { ...structuredClone(src), id: `my-${src.id}`, name: `My ${src.name}`, copyFrom: src.id } } : null;
+    render();
+  }
+});
+
+// ---------- ready-made starting points ----------
+
+function setValue(form, name, value) {
+  const el = form.elements[name];
+  if (el) el.value = value;
+}
+
+/** Fill a strategy’s usual hold days and buy type in New plan. */
+function applyPlanDefaults(form, strategyId) {
+  const d = S.meta.presets.plan[strategyId] ?? S.meta.presets.plan.default;
+  setValue(form, 'days', d.days);
+  setValue(form, 'buyType', d.buyType);
+  if (d.buyType === 'mtf') {
+    const mode = form.elements.fundingMode?.value;
+    setValue(form, 'fundingValue', mode === 'cash' ? trim(100 / d.leverage) : d.leverage);
+    form.elements.fundingValue?.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  syncFunding(form);
+  toast(`Filled the usual values for this strategy (${d.days} days, ${d.buyType === 'mtf' ? `MTF ${d.leverage}×` : 'Regular'}). Change anything you like.`);
+}
+
+function riskPresetValues(key, capital) {
+  const { cashPerTradePct, ...rest } = S.meta.presets.risk[key].values;
+  return { ...rest, cashPerTrade: Math.max(100, Math.round((capital * cashPerTradePct) / 100)) };
+}
+
+function applyRiskPreset(form, key) {
+  const capital = Number(form.elements.capital.value) || S.status.settings.capital;
+  for (const [k, v] of Object.entries(riskPresetValues(key, capital))) setValue(form, k, v);
+}
+
+function applyAgentPreset(form, key) {
+  const p = S.meta.presets.agents[key];
+  if (!p) return;
+  setValue(form, 'scope', p.scope);
+  for (const [k, v] of Object.entries(p.limits)) setValue(form, k, v);
+}
+
+// Typing your own number turns a preset choice into “Custom”.
+document.addEventListener('input', (e) => {
+  const form = e.target.form;
+  if (form?.dataset.form === 'settings' && e.target.dataset.num !== undefined && e.target.name !== 'capital') {
+    const custom = form.querySelector('input[name=preset][value=custom]');
+    if (custom) custom.checked = true;
+  }
+  if (form?.dataset.form === 'settings' && e.target.name === 'capital') {
+    const chosen = form.querySelector('input[name=preset]:checked')?.value;
+    if (chosen && chosen !== 'custom') setValue(form, 'cashPerTrade', riskPresetValues(chosen, Number(e.target.value) || 0).cashPerTrade);
+  }
+  if (form?.dataset.form === 'agent-add' && e.target.name === 'scope') {
+    // Changing access also brings that access level's usual limits (e.g. Propose → 5 requests a day).
+    const match = Object.entries(S.meta.presets.agents).find(([, p]) => p.scope === e.target.value)?.[0];
+    if (match) applyAgentPreset(form, match);
+    setValue(form, 'agentPreset', match ?? 'custom');
+  }
+  if (form?.dataset.form === 'agent-add' && ['intentsPerDay', 'writesPerDay', 'callsPerHour'].includes(e.target.name)) setValue(form, 'agentPreset', 'custom');
 });
 document.addEventListener('input', (e) => {
   const box = e.target.closest('[data-funding]');
@@ -651,9 +899,10 @@ function syncFunding(form) {
 // ---------- routing ----------
 
 function render() {
-  const [route = 'today', arg] = location.hash.replace(/^#\/?/, '').split('/');
+  const [route = 'today', ...args] = location.hash.replace(/^#\/?/, '').split('/');
   const page = pages[route] ?? pages.today;
-  main.innerHTML = page(arg && decodeURIComponent(arg));
+  main.innerHTML = page(...args.map((a) => decodeURIComponent(a)));
+  addInfoButtons(main);
   document.querySelectorAll('form').forEach(syncFunding);
   // Fill the activity/ledger lists only after the page markup exists.
   if (page === pages.today || page === pages.ledger) loadLedger();

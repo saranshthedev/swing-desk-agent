@@ -123,6 +123,45 @@ legend { font-weight: 600; padding: 0 4px; }
 .check.inline { display: inline-flex; margin-right: 12px; }
 .check input[type="number"], .check input:not([type]) { width: 90px; }
 .item-row { margin-bottom: 4px; }
+
+/* Field labels with an “i” help button */
+.field-label { display: flex; align-items: center; gap: 6px; min-height: 32px; }
+legend .info, h2 .info, h3 .info { margin-left: 6px; vertical-align: middle; }
+.info {
+  flex: none; width: 28px; height: 28px; padding: 0; border-radius: 50%;
+  border: 1.5px solid var(--accent); background: var(--surface); color: var(--accent);
+  font: italic 600 14px/1 Georgia, "Times New Roman", serif; cursor: pointer; position: relative;
+}
+.info::after { content: ""; position: absolute; inset: -8px; } /* 44 px touch area */
+.info[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
+.tip { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--ask-bg); color: var(--ink); font-size: 14px; font-weight: 400; line-height: 1.45; }
+
+/* Grouped two-stage checklists */
+.cl-stage { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.cl-stage-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.cl-stage-head h3, .cl-stage-title { margin: 0; }
+.cl-stage p { margin: 0; }
+.cl-group { border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; }
+.cl-group > summary { cursor: pointer; padding: 10px 0; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cl-group-title { font-weight: 600; }
+.cl-group[open] > summary { border-bottom: 1px solid var(--line-2); }
+.cl-items > li { align-items: flex-start; }
+.cl-answer { align-items: flex-start; min-height: 0; padding: 2px 0; }
+.cl-answer input { margin-top: 3px; flex: none; }
+.cl-help { color: var(--ink-2); margin-top: 2px; }
+.cl-library { padding: 0 16px; }
+.cl-library > p { margin: 8px 0; }
+.card .cl-group + .cl-group { margin-top: 8px; }
+
+/* Ready-made starting points */
+.presets { display: flex; flex-direction: column; gap: 8px; }
+.presets p { margin: 0; }
+.preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.preset { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.preset:has(input:checked) { border-color: var(--accent); background: var(--ask-bg); }
+.preset input { margin-top: 2px; }
+.preset span { display: flex; flex-direction: column; gap: 2px; }
+.preset small { color: var(--muted); font-size: 13px; }
 .funding { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .grid > .funding { grid-column: 1 / -1; }
 .funding[hidden] { display: none; }

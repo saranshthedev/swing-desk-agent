@@ -22,6 +22,7 @@ export function initialState() {
     playbooks: {},
     tasks: {},
     taskSlots: new Set(),
+    research: {},
     usage: {},
   };
 }
@@ -32,6 +33,18 @@ const reducers = {
   'automation.paused': (s) => { s.automationPaused = true; },
   'automation.resumed': (s) => { s.automationPaused = false; },
   'strategy.saved': (s, d) => { s.strategies[d.id] = { ...d, builtin: !!s.strategies[d.id]?.builtin }; },
+  // Owner research answers for a stock + strategy: item id → time answered. A new strategy
+  // version starts a fresh record; `false` removes an answer.
+  'research.answered': (s, d, e) => {
+    const key = `${d.symbol}|${d.strategyId}`;
+    const prev = s.research[key]?.version === d.strategyVersion ? s.research[key].items : {};
+    const items = { ...prev };
+    for (const [id, yes] of Object.entries(d.answers)) {
+      if (yes) items[id] = e.at;
+      else delete items[id];
+    }
+    s.research[key] = { version: d.strategyVersion, items };
+  },
 
   'agent.added': (s, d) => { s.agents[d.id] = { ...d, revoked: false }; },
   'agent.updated': (s, d) => { Object.assign(s.agents[d.id], d); },

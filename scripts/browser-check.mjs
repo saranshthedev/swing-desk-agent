@@ -138,7 +138,10 @@ try {
   assert.match(await toast(), /Wrong PIN/);
 
   await go('#/agents');
-  await submit('agent-add', { name: 'Research agent', client: 'Test client', scope: 'propose', pin: '24681357' });
+  // Choosing Access like a person does also brings that level's usual limits.
+  await js(`(() => { const s = document.querySelector('form[data-form=agent-add]').elements.scope; s.value = 'propose'; s.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert.deepEqual(await js('(() => { const f = document.querySelector("form[data-form=agent-add]").elements; return [f.agentPreset.value, f.intentsPerDay.value]; })()'), ['proposer', '5']);
+  await submit('agent-add', { name: 'Research agent', client: 'Test client', pin: '24681357' });
   const config = await until(() => js('document.querySelector("pre.code")?.textContent'), 'key panel');
   const key = JSON.parse(config).mcpServers['swing-desk'].env.SWING_DESK_AGENT_KEY;
   assert.match(key, /^sdk_agent_/);
@@ -157,12 +160,26 @@ try {
     return r.structuredContent;
   };
   await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'browser-check', version: '1' } });
-  for (const [kind, summary] of [['news', 'No adverse news today'], ['candles', 'Closed above 20-day high on 2.1× volume'], ['calendar', 'Results in four weeks']]) {
+  // Claude researches: per-stock evidence, plus market-wide checks saved once under MARKET.
+  for (const [kind, summary] of [['news', 'No adverse news today'], ['candles', 'Closed above 20-day high on 2.1× volume'], ['calendar', 'Results in four weeks'],
+    ['zones', 'Weekly uptrend; nearest weekly supply at 580'], ['sector', 'Sector index beat Nifty over 3 months'], ['fundamentals', 'Sales +18% a year; promoter 62%, no pledge']]) {
     await tool('add_evidence', { kind, symbol: 'SAMPLE', summary, sources: ['https://example.com/source'] });
   }
+  await tool('add_evidence', { kind: 'macro', symbol: 'MARKET', summary: 'Nifty uptrend, VIX 13, US flat, Brent $78, USDINR 83.9 steady', sources: ['https://example.com/markets'] });
+  const status = await tool('get_research_status', { symbol: 'SAMPLE', strategyId: 'breakout' });
+  assert.ok(status.checks.filter((c) => c.type === 'evidence').every((c) => c.status === 'pass'), 'all evidence items pass after research');
   await tool('add_evidence', { kind: 'quote', symbol: 'SAMPLE', price: 500.5, summary: 'Public exchange page' });
   await tool('add_evidence', { kind: 'funding', symbol: 'SAMPLE', marginPct: 40, summary: 'Broker MTF list page' });
-  const proposed = await tool('propose_buy', { symbol: 'SAMPLE', strategyId: 'breakout', thesis: 'Synthetic breakout for testing', claims: { volume: '2.1× the 20-day average' }, plan: { buyType: 'mtf', marginPct: 50, entry: 500, stop: 485, target: 560, days: 10 } });
+  const proposed = await tool('propose_buy', { symbol: 'SAMPLE', strategyId: 'breakout', thesis: 'Synthetic breakout for testing', claims: { 'volume-signal': '2.1× the 20-day average' }, plan: { buyType: 'mtf', marginPct: 50, entry: 500, stop: 485, target: 560, days: 10 } });
+
+  // Stage 1: the owner ticks research items on the Prepare page (valid 5 days).
+  await go('#/prepare/breakout/SAMPLE');
+  await waitText('Research not finished');
+  await shot('prepare', 390);
+  await js('[...document.querySelectorAll("form[data-form=research] input[type=checkbox]")].filter((b) => b.name.startsWith("answer:")).forEach((b) => { b.checked = true; })');
+  await submit('research', {});
+  assert.match(await toast(), /Research saved/);
+  await waitText('Research done');
 
   // Owner reviews the agent's request in the browser.
   await js('location.reload()');
@@ -179,7 +196,13 @@ try {
   await js('[...document.querySelectorAll("[data-action=confirm-evidence]")].forEach((b) => b.click())');
   await until(async () => !(await js('!!document.querySelector("[data-action=confirm-evidence]")')), 'confirmations');
   await until(async () => (await text()).includes('Fresh price from your broker') && !(await text()).includes('An agent found ₹500.5'), 'quote check updated');
-  await submit('approve', { 'answer:volume': true, 'answer:market': true, pin: '24681357' });
+  // Stage 2: research answers already count; only on-the-day items still need ticking.
+  // Passed groups start collapsed, so read the full text, not just what is visible.
+  assert.match(await js('document.querySelector("main").textContent'), /You checked this in research on/);
+  const boxes = await js('[...document.querySelectorAll("form[data-form=approve] input[type=checkbox]")].filter((b) => b.name.startsWith("answer:")).map((b) => b.name)');
+  assert.ok(boxes.length > 0 && !boxes.includes('answer:fund-debt'), 'research items are not asked again');
+  await js('[...document.querySelectorAll("form[data-form=approve] input[type=checkbox]")].filter((b) => b.name.startsWith("answer:")).forEach((b) => { b.checked = true; })');
+  await submit('approve', { pin: '24681357' });
   assert.match(await toast(), /Approved\. Now in Kite: BUY \d+ SAMPLE/);
 
   // Record the real fill, then a partial sale.
@@ -196,6 +219,50 @@ try {
   await waitText(`SAMPLE · ${approvedQty - 2} shares at ₹500.20`);
   await shot('positions');
   await shot('positions', 390);
+
+  // Every form field on these pages has an "i" help button.
+  for (const page of ['#/settings', '#/plan', '#/research', '#/agents', '#/playbooks/new', '#/strategies/new', '#/prepare']) {
+    await go(page);
+    const missing = await js('[...document.querySelectorAll(".field")].filter((f) => !f.querySelector(".info")).map((f) => f.querySelector("label")?.textContent)');
+    assert.deepEqual(missing, [], `fields without help on ${page}`);
+  }
+  // Keyboard: Enter opens the help, Escape closes it.
+  await go('#/settings');
+  await js('document.querySelector(".field .info").focus()');
+  await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+  await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  assert.match(await js('(() => { const b = document.querySelector(".field .info"); return b.getAttribute("aria-expanded") + " " + document.getElementById(b.getAttribute("aria-controls")).textContent; })()'), /^true .*₹1,00,000/);
+  await shot('settings-help', 390);
+  await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  assert.equal(await js('document.querySelector(".field .info").getAttribute("aria-expanded")'), 'false');
+
+  // Risk presets fill the boxes from capital; typing a number switches to Custom.
+  assert.match(await text(), /Your saved limits: Balanced/);
+  await js(`(() => { const r = document.querySelector('input[name=preset][value=careful]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert.deepEqual(await js('(() => { const f = document.querySelector("form[data-form=settings]").elements; return [f.riskPct.value, f.cashPerTrade.value, f.maxOpenLots.value]; })()'), ['0.25', '15000', '4']);
+  await js(`(() => { const i = document.querySelector('form[data-form=settings]').elements.maxOpenLots; i.value = '5'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert.equal(await js('document.querySelector("input[name=preset]:checked").value'), 'custom');
+  await shot('settings-presets');
+
+  // Agent presets and playbook templates fill their forms.
+  await go('#/agents');
+  await js(`(() => { const s = document.querySelector('form[data-form=agent-add]').elements.agentPreset; s.value = 'proposer'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert.deepEqual(await js('(() => { const f = document.querySelector("form[data-form=agent-add]").elements; return [f.scope.value, f.intentsPerDay.value]; })()'), ['propose', '5']);
+  await go('#/playbooks/new');
+  await js(`(() => { const s = document.querySelector('form[data-form=playbook]').elements.template; s.value = 'watch'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert.deepEqual(await js('(() => { const f = document.querySelector("form[data-form=playbook]").elements; return [f.name.value, f.every.value, f.mode.value]; })()'), ['Position watch', '30', 'every']);
+  await go('#/strategies/new');
+  await js(`(() => { const s = document.querySelector('form[data-form=strategy]').elements.copyFrom; s.value = 'results'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert.equal(await js('document.querySelectorAll(".item-row").length'), await js('(() => { const s = [...document.querySelectorAll("select[name=copyFrom] option")].find((o) => o.value === "results"); return s ? Number(document.querySelectorAll(".item-row").length) : -1; })()'));
+  // Adding a whole library group appends its checks.
+  const before = await js('document.querySelectorAll(".item-row").length');
+  await js(`(() => { const s = document.querySelector('form[data-form=strategy]').elements.libraryPick; s.value = 'group:commodities'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert.ok((await js('document.querySelectorAll(".item-row").length')) > before, 'library group added');
+  // Picking a strategy in New plan fills its usual hold days and buy type.
+  await go('#/plan');
+  await js(`(() => { const s = document.querySelector('form[data-form=plan]').elements.strategyId; s.value = 'results'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert.deepEqual(await js('(() => { const f = document.querySelector("form[data-form=plan]").elements; return [f.days.value, f.buyType.value]; })()'), ['7', 'regular']);
+  await js(`(() => { const s = document.querySelector('form[data-form=plan]').elements.strategyId; s.value = 'breakout'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
 
   // MTF funding can be entered as leverage or own cash %; switching converts the typed value.
   await go('#/plan');
@@ -221,7 +288,7 @@ try {
   assert.match(await toast(), /paused/);
   const paused = (await rpc('tools/call', { name: 'desk_status', arguments: {} })).result;
   assert.ok(paused.isError && /paused/.test(paused.content[0].text));
-  for (const page of ['#/research', '#/strategies', '#/strategies/breakout', '#/playbooks/new', '#/requests', '#/plan', '#/today']) {
+  for (const page of ['#/research', '#/strategies', '#/strategies/breakout', '#/checklist', '#/prepare', '#/playbooks/new', '#/requests', '#/plan', '#/today']) {
     await go(page);
     await shot(page.replace(/[#/]+/g, '-').replace(/^-|-$/g, '') || 'page', 390);
   }

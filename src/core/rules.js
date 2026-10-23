@@ -5,6 +5,7 @@ import { estimateCosts, fundingLabel } from './fees.js';
 import { sizePlan } from './sizing.js';
 import { FIXED } from './settings.js';
 import { daysBetween, indiaDate, indiaWeekStart } from './time.js';
+import { MARKET, RESEARCH_VALID_DAYS } from './checklist-library.js';
 
 const money = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
@@ -101,33 +102,64 @@ function strategyChecks(state, intent, plan, sizing, now, answers) {
   if (strategy.version !== intent.strategyVersion) {
     return [check('strategy', strategy.name, 'fail', `The checklist changed after this request (v${intent.strategyVersion} → v${strategy.version}). Ask for a new request.`)];
   }
-  const today = indiaDate(now);
   const out = [check('strategy', `Strategy: ${strategy.name}`, 'pass', `Checklist version ${strategy.version}`)];
-  for (const item of strategy.items) {
-    const id = `item:${item.id}`;
-    if (item.type === 'attest') {
-      const claim = intent.claims?.[item.id];
-      const detail = claim ? `Agent says (not verified): ${claim}` : (item.help || 'Tick this yourself when approving.');
-      out.push(check(id, item.label, answers[item.id] === true ? 'pass' : 'ask', detail, item.required));
-    } else if (item.type === 'evidence') {
-      const ev = latestEvidence(state, item.kind, intent.symbol);
-      const age = ev ? daysBetween(indiaDate(Date.parse(ev.observedAt)), today) : Infinity;
-      if (ev && age <= item.maxAgeDays) {
-        out.push(check(id, item.label, 'pass', `${ev.by === 'owner' ? 'You' : 'Agent (not verified)'}: ${(ev.summary || '').slice(0, 140)}`, item.required));
-      } else {
-        out.push(check(id, item.label, 'stale', `Needs “${item.kind}” evidence from ${item.maxAgeDays === 0 ? 'today' : `the last ${item.maxAgeDays} day(s)`}.`, item.required));
-      }
-    } else {
-      const pass = {
-        minRewardRisk: () => sizing.rewardRisk >= item.value,
-        maxStopPct: () => ((plan.entry - plan.stop) / plan.entry) * 100 <= item.value,
-        maxDays: () => plan.days <= item.value,
-        regularOnly: () => plan.buyType === 'regular',
-      }[item.rule]();
-      out.push(check(id, item.label, pass ? 'pass' : 'fail', pass ? 'Plan meets this rule' : 'Plan breaks this rule'));
-    }
-  }
+  const ctx = { symbol: intent.symbol, claims: intent.claims, answers, research: researchFor(state, intent.symbol, strategy, now), plan, sizing, now };
+  for (const item of strategy.items) out.push(itemCheck(state, item, ctx));
   return out;
+}
+
+/** Owner research answers for a stock + strategy that are still valid (same version, ≤ 5 India days old). */
+export function researchFor(state, symbol, strategy, now) {
+  const saved = state.research[`${symbol}|${strategy.id}`];
+  if (!saved || saved.version !== strategy.version) return {};
+  const today = indiaDate(now);
+  return Object.fromEntries(Object.entries(saved.items).filter(([, at]) => daysBetween(indiaDate(Date.parse(at)), today) <= RESEARCH_VALID_DAYS));
+}
+
+/**
+ * One strategy checklist item. ctx: { symbol, claims, answers (today's ticks), research (saved
+ * research answers), plan & sizing (absent on the Prepare page), now }.
+ */
+export function itemCheck(state, item, ctx) {
+  const meta = { group: item.group ?? null, stage: item.stage ?? 'before', help: item.help ?? '', type: item.type };
+  const done = (status, detail) => ({ ...check(`item:${item.id}`, item.label, status, detail, item.type === 'rule' ? true : item.required), ...meta });
+  const today = indiaDate(ctx.now);
+  if (item.type === 'attest') {
+    if (ctx.answers?.[item.id] === true) return done('pass', 'You ticked this now.');
+    const researchedAt = meta.stage === 'research' ? ctx.research?.[item.id] : null;
+    if (researchedAt) return done('pass', `You checked this in research on ${indiaDate(Date.parse(researchedAt))}. Valid for ${RESEARCH_VALID_DAYS} days.`);
+    const claim = ctx.claims?.[item.id];
+    return done('ask', claim ? `Agent says (not verified): ${claim}` : (item.help || 'Tick this yourself.'));
+  }
+  if (item.type === 'evidence') {
+    const market = item.scope === 'market';
+    const ev = latestEvidence(state, item.kind, market ? MARKET : ctx.symbol);
+    const age = ev ? daysBetween(indiaDate(Date.parse(ev.observedAt)), today) : Infinity;
+    if (ev && age <= item.maxAgeDays) return done('pass', `${ev.by === 'owner' ? 'You' : 'Agent (not verified)'}${market ? ' · market-wide' : ''}: ${(ev.summary || '').slice(0, 140)}`);
+    return done('stale', `Needs “${item.kind}” evidence${market ? ` saved under ${MARKET}` : ''} from ${item.maxAgeDays === 0 ? 'today' : `the last ${item.maxAgeDays} day(s)`}.`);
+  }
+  if (!ctx.plan) return done('info', 'Checked automatically when you make the plan.');
+  const pass = {
+    minRewardRisk: () => ctx.sizing.rewardRisk >= item.value,
+    maxStopPct: () => ((ctx.plan.entry - ctx.plan.stop) / ctx.plan.entry) * 100 <= item.value,
+    maxDays: () => ctx.plan.days <= item.value,
+    regularOnly: () => ctx.plan.buyType === 'regular',
+  }[item.rule]();
+  return done(pass ? 'pass' : 'fail', pass ? 'Plan meets this rule' : 'Plan breaks this rule');
+}
+
+/** Research-stage status for a stock before any request exists (the Prepare page and agents). */
+export function researchStatus(state, symbol, strategyId, now) {
+  const strategy = state.strategies[strategyId];
+  if (!strategy) return null;
+  const ctx = { symbol, answers: {}, research: researchFor(state, symbol, strategy, now), now };
+  const checks = strategy.items.map((item) => itemCheck(state, item, ctx));
+  const research = checks.filter((c) => c.stage === 'research');
+  return {
+    strategyId, strategyName: strategy.name, version: strategy.version, symbol,
+    checks,
+    researchDone: research.every((c) => !c.required || c.status === 'pass' || c.status === 'info'),
+  };
 }
 
 export function evaluateBuy(state, intent, now, answers = {}) {

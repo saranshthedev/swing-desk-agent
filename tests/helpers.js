@@ -19,14 +19,21 @@ export function desk(start = FRIDAY_11_IST) {
 
 export const PLAN = { exchange: 'NSE', buyType: 'mtf', marginPct: 50, entry: 100, stop: 95, target: 116, days: 10 };
 
-/** Evidence that satisfies the breakout checklist and the global fresh-data checks. */
-export function readyEvidence(d, symbol = 'ABC', agent) {
+/** Evidence for every evidence item of a strategy (market-wide ones under MARKET), plus fresh price data. */
+export function readyEvidence(d, symbol = 'ABC', agent, strategyId = 'breakout') {
   const by = agent ? agent.run : d.owner;
-  by(C.addEvidence, { kind: 'news', symbol, summary: 'No adverse news' });
-  by(C.addEvidence, { kind: 'candles', symbol, summary: 'Closed above 20-day high' });
-  by(C.addEvidence, { kind: 'calendar', symbol, summary: 'Results on 20 Nov' });
+  const items = d.store.read((s) => s.strategies[strategyId].items.filter((i) => i.type === 'evidence'));
+  const done = new Set();
+  for (const i of [...items, { kind: 'news', scope: 'stock' }]) {
+    const sym = i.scope === 'market' ? 'MARKET' : symbol;
+    if (done.has(i.kind + sym)) continue;
+    done.add(i.kind + sym);
+    by(C.addEvidence, { kind: i.kind, symbol: sym, summary: `Checked ${i.kind}` });
+  }
   d.owner(C.addEvidence, { kind: 'quote', symbol, price: 100.1 });
   d.owner(C.addEvidence, { kind: 'funding', symbol, marginPct: 40, summary: 'Kite' });
 }
 
-export const BREAKOUT_ANSWERS = { volume: true, market: true };
+/** “Yes” to every you-answer item of a strategy. */
+export const answersFor = (d, strategyId = 'breakout') =>
+  d.store.read((s) => Object.fromEntries(s.strategies[strategyId].items.filter((i) => i.type === 'attest').map((i) => [i.id, true])));

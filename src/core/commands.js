@@ -339,6 +339,21 @@ export function changeStop(state, { lotId, stop }) {
   return { events: [{ type: 'lot.stopChanged', data: { lotId, stop } }] };
 }
 
+// ---------- research (stage 1, days before the trade) ----------
+
+/** The owner ticks research-stage “you answer” items for a stock + strategy. Valid 5 days. */
+export function saveResearch(state, { symbol, strategyId, answers }) {
+  const strategy = state.strategies[strategyId];
+  if (!strategy) throw new UserError('Choose a strategy.');
+  if (!answers || typeof answers !== 'object' || !Object.keys(answers).length) throw new UserError('Nothing to save.');
+  for (const [id, v] of Object.entries(answers)) {
+    const item = strategy.items.find((i) => i.id === id);
+    if (!item || item.type !== 'attest' || (item.stage ?? 'before') !== 'research') throw new UserError(`“${id}” is not a research item you can answer ahead in ${strategy.name}.`);
+    if (typeof v !== 'boolean') throw new UserError('Answers must be yes or no.');
+  }
+  return { events: [{ type: 'research.answered', data: { symbol: symbolOf(symbol), strategyId, strategyVersion: strategy.version, answers } }] };
+}
+
 // ---------- strategies ----------
 
 export function saveStrategy(state, input) {

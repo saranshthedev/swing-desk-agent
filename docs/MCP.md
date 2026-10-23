@@ -65,6 +65,17 @@ If you changed the data folder with `SWING_DESK_DATA`, add the same variable her
 Keep the key out of anything you share. A model app that can also read your files or run
 shell commands can bypass MCP limits; give such apps a low level or no key.
 
+## The checklist and its two stages
+
+`get_checklist_library` returns every pre-trade check (15 groups, 107 checks) with plain help and
+free places to look. Each check has a stage: **research** (can be done 1–5 days before) or
+**before** (on the day). `get_research_status` shows, for one stock and strategy, what already
+passes and what still needs evidence or the owner’s answer. Only the owner can tick “you answer”
+items; research ticks stay valid for 5 days.
+
+Market-wide facts – Nifty and VIX, US and Asian markets, crude oil, USDINR, FII/DII flows – are saved
+once a day with `add_evidence` (kind `macro`) under the symbol **MARKET** and count for every stock.
+
 ## Where information comes from
 
 The desk adds no data source of its own and never will use a paid one. Your model finds

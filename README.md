@@ -7,7 +7,7 @@ real fill.
 
 - Works with any MCP model app (Claude Desktop, Claude Code, ChatGPT, local models). No model API key.
 - Zerodha Regular (CNC) and MTF charges, sizing from your loss limit and cash limit.
-- Per-strategy checklists: things you answer, evidence that must be fresh, and fixed rules.
+- A 107-item pre-trade checklist in 15 groups (market, global, USDINR, oil and commodities, fundamentals, weekly/monthly demand-supply zones, volume, plan, money, order) split into research (1–5 days before) and on-the-day stages; each strategy picks from it.
 - Scheduled playbooks that hand tasks to your model app in India time.
 - Every change is an entry in a tamper-evident ledger.
 - Node 24 only. No npm packages, no database server, no paid feed. MIT licence.
@@ -23,6 +23,14 @@ pages, filings) and record it with sources. Prices and MTF requirements an agent
 toward approval only after you confirm in one click that Kite shows the same.
 
 ## Start
+
+**New here? Follow the easy step-by-step guide: [docs/SETUP.md](docs/SETUP.md).**
+
+Windows in short: install Node.js 24 and the Claude Code extension, then double-click
+**`setup.cmd`** once and **`start.cmd`** (or the Desktop shortcut it makes) every day.
+Mac/Linux: `./setup.sh` and `./start.sh`.
+
+Or by hand:
 
 ```sh
 node --version   # v24.x
@@ -45,7 +53,11 @@ Change it with `SWING_DESK_DATA`, the port with `SWING_DESK_PORT`, backups with 
 | Command | Does |
 |---|---|
 | `npm start` | Web app and playbook scheduler on 127.0.0.1 |
+| `setup.cmd` / `./setup.sh` | Guided first-time setup: Claude connection, Desktop shortcut, automatic runs |
+| `start.cmd` / `./start.sh` | Start the app and open the browser (or just open it if already running) |
 | `npm run connect` | Set the PIN if needed, create a key and register the desk with Claude Code |
+| `node bin/desk.js schedule [list\|add HH:MM\|remove HH:MM\|remove all]` | Weekday automatic Claude runs (Task Scheduler on Windows, a crontab line elsewhere) |
+| `node bin/desk.js run-tasks` | One automatic run: Claude takes queued playbook tasks with only the desk tools and web search |
 | `npm run mcp` | MCP server on stdio (needs `SWING_DESK_AGENT_KEY`) |
 | `npm test` | Test suite (no network, no real data) |
 | `npm run test:browser [folder]` | Optional owner-flow check in an installed Chrome/Edge, with a real MCP client; saves screenshots if a folder is given |
