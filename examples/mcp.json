@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "swing-desk": {
+      "command": "node",
+      "args": [
+        "C:/path/to/swing-desk-agent/bin/desk.js",
+        "mcp"
+      ],
+      "env": {
+        "SWING_DESK_AGENT_KEY": "PASTE_THE_KEY_FROM_THE_AGENTS_PAGE"
+      }
+    }
+  }
+}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swing Desk Agent</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<div class="shell">
+  <nav class="side" aria-label="Main">
+    <div class="brand"><img src="icon.svg" alt="" width="28" height="28"> Swing Desk</div>
+    <a href="#/today" data-route="today">Today</a>
+    <a href="#/requests" data-route="requests">Requests <span class="count" id="pending-count" hidden></span></a>
+    <a href="#/plan" data-route="plan">New plan</a>
+    <a href="#/positions" data-route="positions">Positions</a>
+    <a href="#/research" data-route="research">Research</a>
+    <a href="#/strategies" data-route="strategies">Strategies</a>
+    <a href="#/playbooks" data-route="playbooks">Playbooks</a>
+    <a href="#/agents" data-route="agents">Agents &amp; MCP</a>
+    <a href="#/ledger" data-route="ledger">Ledger</a>
+    <a href="#/settings" data-route="settings">Settings</a>
+    <div class="automation" id="automation"></div>
+  </nav>
+  <main id="main" tabindex="-1"><p class="muted">Loading…</p></main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
