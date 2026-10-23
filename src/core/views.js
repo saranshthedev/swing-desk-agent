@@ -2,6 +2,7 @@
 
 import { evaluate, portfolio, lotRisk } from './rules.js';
 import { sizePlan } from './sizing.js';
+import { resolveMarginPct } from './fees.js';
 import { planProblem } from './rules.js';
 import { UserError } from './settings.js';
 import { indiaDate } from './time.js';
@@ -44,7 +45,7 @@ export function previewPlan(state, input) {
   const plan = {
     exchange: input.exchange ?? 'NSE',
     buyType: input.buyType,
-    marginPct: input.buyType === 'regular' ? 100 : input.marginPct,
+    marginPct: resolveMarginPct(input),
     entry: input.entry, stop: input.stop, target: input.target, days: input.days,
     ...(input.qty !== undefined ? { qty: input.qty } : {}),
   };

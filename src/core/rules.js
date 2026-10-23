@@ -1,7 +1,7 @@
 // Fixed, model-free checks. An intent can be approved only when every required check passes
 // at the moment of approval. Agent claims never satisfy a check that needs owner evidence.
 
-import { estimateCosts } from './fees.js';
+import { estimateCosts, fundingLabel } from './fees.js';
 import { sizePlan } from './sizing.js';
 import { FIXED } from './settings.js';
 import { daysBetween, indiaDate, indiaWeekStart } from './time.js';
@@ -87,7 +87,7 @@ export function planProblem(plan) {
   if (!Number.isInteger(plan.days) || plan.days < 1 || plan.days > FIXED.maxHoldDays) return `Holding days must be a whole number from 1 to ${FIXED.maxHoldDays}.`;
   if (!['mtf', 'regular'].includes(plan.buyType)) return 'Choose MTF or Regular.';
   if (plan.buyType === 'mtf' && (!Number.isFinite(plan.marginPct) || plan.marginPct < 100 / FIXED.maxLeverage || plan.marginPct > 100)) {
-    return `For MTF, your own cash must be ${100 / FIXED.maxLeverage}% to 100% of the buy value (at most ${FIXED.maxLeverage}× leverage).`;
+    return `For MTF, leverage must be 1× to ${FIXED.maxLeverage}× (your own cash ${100 / FIXED.maxLeverage}% to 100% of the buy value).`;
   }
   if (!['NSE', 'BSE'].includes(plan.exchange)) return 'Choose NSE or BSE.';
   if (plan.qty !== undefined && plan.qty !== null && (!Number.isInteger(plan.qty) || plan.qty < 1)) return 'Shares must be a whole number.';
@@ -195,12 +195,13 @@ export function evaluateBuy(state, intent, now, answers = {}) {
     const funding = latestEvidence(state, 'funding', intent.symbol, { ownerOnly: true });
     if (!funding || indiaDate(Date.parse(funding.observedAt)) !== today) {
       const agentFunding = latestEvidence(state, 'funding', intent.symbol);
-      const hint = agentFunding && agentFunding.by !== 'owner' ? ` An agent found ${agentFunding.marginPct}%; confirm it if Kite shows the same.` : '';
+      const hint = agentFunding && agentFunding.by !== 'owner' ? ` An agent found ${fundingLabel(agentFunding.marginPct)}; confirm it if Kite shows the same.` : '';
       checks.push(check('funding', 'MTF cash requirement checked today', 'stale', `Check this stock’s MTF requirement in Kite today and record or confirm it.${hint}`));
-    } else if (funding.marginPct > plan.marginPct) {
-      checks.push(check('funding', 'MTF cash requirement checked today', 'fail', `Kite needs ${funding.marginPct}% own cash; the plan uses ${plan.marginPct}%.`));
+    } else if (funding.marginPct > plan.marginPct + 0.01) {
+      // 0.01 tolerance: 3× is 33.33…% and brokers round it to 33.33%.
+      checks.push(check('funding', 'MTF cash requirement checked today', 'fail', `Kite allows at most ${fundingLabel(funding.marginPct)}; the plan uses ${fundingLabel(plan.marginPct)}.`));
     } else {
-      checks.push(check('funding', 'MTF cash requirement checked today', 'pass', `Kite needs ${funding.marginPct}%; plan uses ${plan.marginPct}%`));
+      checks.push(check('funding', 'MTF cash requirement checked today', 'pass', `Kite allows up to ${fundingLabel(funding.marginPct)}; plan uses ${fundingLabel(plan.marginPct)}`));
     }
   }
 
@@ -232,7 +233,7 @@ export function evaluateSettings(state, intent, now) {
 export function orderTicket(intent, evaluation, lot) {
   if (intent.kind === 'buy') {
     const p = evaluation.plan;
-    return `BUY ${evaluation.sizing.qty} ${intent.symbol} on ${p.exchange} · ${p.buyType === 'mtf' ? `MTF (${p.marginPct}% own cash)` : 'CNC (Regular)'} · LIMIT ₹${p.entry.toFixed(2)} · then set stop ₹${p.stop.toFixed(2)} and target ₹${p.target.toFixed(2)}`;
+    return `BUY ${evaluation.sizing.qty} ${intent.symbol} on ${p.exchange} · ${p.buyType === 'mtf' ? `MTF ${fundingLabel(p.marginPct)}` : 'CNC (Regular)'} · LIMIT ₹${p.entry.toFixed(2)} · then set stop ₹${p.stop.toFixed(2)} and target ₹${p.target.toFixed(2)}`;
   }
   if (intent.kind === 'exit') return `SELL ${intent.qty} ${lot.symbol} on ${lot.exchange} · ${lot.buyType === 'mtf' ? 'MTF' : 'CNC'} · your chosen order type`;
   return '';

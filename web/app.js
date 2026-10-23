@@ -34,6 +34,29 @@ const SCOPE_HELP = {
 };
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// MTF funding: brokers quote leverage (2×) or own cash % (50%); same thing, own cash % = 100 ÷ leverage.
+const trim = (n) => String(Number(Number(n).toFixed(2)));
+const lev = (marginPct) => `${trim(100 / marginPct)}×`;
+const funding = (marginPct) => `${lev(marginPct)} (${trim(marginPct)}% own cash)`;
+function fundingMode() {
+  try { return localStorage.getItem('fundingMode') === 'cash' ? 'cash' : 'leverage'; } catch { return 'leverage'; }
+}
+/** A mode switch and one number box. The hint shows the other form as you type. */
+function fundingFields(label, mode, value) {
+  return `<div class="funding" data-funding data-label="${esc(label)}">
+    ${field(label, `<select name="fundingMode">${options([['leverage', 'Leverage (×)'], ['cash', 'Own cash %']], mode)}</select>`)}
+    ${field(mode === 'cash' ? 'Own cash %' : 'Leverage ×', num('fundingValue', value ?? '', 'min="1" max="100"'), `<span class="funding-hint">${fundingHint(mode, value)}</span>`)}
+  </div>`;
+}
+function fundingHint(mode, value) {
+  const v = Number(value);
+  if (!value || !Number.isFinite(v) || v <= 0) return 'Example: 2× leverage = 50% own cash: you pay half, Zerodha lends half.';
+  const pct = mode === 'cash' ? v : 100 / v;
+  return pct > 100 || pct <= 0 ? 'Leverage must be at least 1× (own cash at most 100%).' : `= ${funding(pct)}. You pay ${trim(pct)}% and borrow ${trim(100 - pct)}%.`;
+}
+/** Turn the switch + number into what the API takes. */
+const fundingInput = (data) => (data.fundingMode === 'cash' ? { marginPct: data.fundingValue } : { leverage: data.fundingValue });
+
 // ---------- server ----------
 
 async function api(path, init = {}) {
@@ -139,7 +162,7 @@ const pages = {
 
   plan() {
     const strategies = S.strategies.filter((s) => s.enabled);
-    const d = drafts.plan ?? { exchange: 'NSE', buyType: 'mtf', marginPct: 50, days: 10, strategyId: strategies[0]?.id };
+    const d = drafts.plan ?? { exchange: 'NSE', buyType: 'mtf', fundingMode: fundingMode(), fundingValue: fundingMode() === 'cash' ? 50 : 2, days: 10, strategyId: strategies[0]?.id };
     return `<header class="page-head"><h1>New plan</h1></header>
       <p class="lead">Your own plan goes through the same checks as an agent’s. Leave shares blank and the desk sizes it from your limits.</p>
       <form class="card form" data-form="plan">
@@ -148,7 +171,7 @@ const pages = {
           ${field('Strategy', `<select name="strategyId">${options(strategies.map((s) => [s.id, s.name]), d.strategyId)}</select>`)}
           ${field('Exchange', `<select name="exchange">${options([['NSE', 'NSE'], ['BSE', 'BSE']], d.exchange)}</select>`)}
           ${field('Buy type', `<select name="buyType">${options([['mtf', 'MTF (borrow from Zerodha)'], ['regular', 'Regular / CNC (own cash only)']], d.buyType)}</select>`)}
-          ${field('MTF: your own cash %', num('marginPct', d.marginPct, 'min="20" max="100"'), '50% means you pay half and borrow half (2×).')}
+          ${fundingFields('MTF funding entered as', d.fundingMode, d.fundingValue)}
           ${field('Entry (limit) ₹', num('entry', d.entry, 'required'))}
           ${field('Stop ₹', num('stop', d.stop, 'required'))}
           ${field('Target ₹', num('target', d.target, 'required'))}
@@ -179,7 +202,7 @@ const pages = {
             ${field('Stock', '<input name="symbol" required autocapitalize="characters">')}${field('Price ₹', num('price', '', 'required'))}
             <button class="btn primary">Save price</button></form>
           <form class="card form" data-form="funding"><h2>MTF requirement</h2><p class="small muted">From Kite’s MTF stock list, today. Counts for today only.</p>
-            ${field('Stock', '<input name="symbol" required autocapitalize="characters">')}${field('Own cash needed %', num('marginPct', '', 'required min="1" max="100"'))}
+            ${field('Stock', '<input name="symbol" required autocapitalize="characters">')}${fundingFields('Kite shows it as', fundingMode())}
             ${field('Where you checked', '<input name="summary" value="Kite MTF list">')}
             <button class="btn primary">Save requirement</button></form>
           <form class="card form" data-form="evidence"><h2>Other evidence</h2>
@@ -273,14 +296,14 @@ function pendingRequest(i) {
   const fundingFix = ev.checks.some((c) => c.id === 'funding' && c.status !== 'pass');
   const attest = ev.checks.filter((c) => c.status === 'ask');
   const planCard = sizing ? `<section class="card"><h2>The plan, recalculated by the desk</h2><p class="small muted">The agent’s numbers are not trusted. Size and charges come from your saved limits.</p>
-    <div class="stats">${[['Entry', price(ev.plan.entry)], ['Stop', price(ev.plan.stop)], ['Target', price(ev.plan.target)], ['Shares', sizing.qty], ['Type', ev.plan.buyType === 'mtf' ? `MTF ${(100 / ev.plan.marginPct).toFixed(1)}×` : 'Regular'], ['Hold up to', `${ev.plan.days} days`], ['Loss at stop', money(sizing.riskAtStop)], ['Gain at target', money(sizing.rewardAtTarget)]].map(([k, v]) => `<div><span>${k}</span><b class="mono">${v}</b></div>`).join('')}</div>
+    <div class="stats">${[['Entry', price(ev.plan.entry)], ['Stop', price(ev.plan.stop)], ['Target', price(ev.plan.target)], ['Shares', sizing.qty], ['Type', ev.plan.buyType === 'mtf' ? `MTF ${funding(ev.plan.marginPct)}` : 'Regular'], ['Hold up to', `${ev.plan.days} days`], ['Loss at stop', money(sizing.riskAtStop)], ['Gain at target', money(sizing.rewardAtTarget)]].map(([k, v]) => `<div><span>${k}</span><b class="mono">${v}</b></div>`).join('')}</div>
     <p>In plain words: you put in ${money(sizing.ownCash)} of your own cash${sizing.borrowed > 0 ? ` and borrow ${money(sizing.borrowed)} (interest about ${money(sizing.interestPerDay)} a day)` : ''}. If the price falls to the stop you lose about ${money(sizing.riskAtStop)} including charges and a ${price(sizing.slipPerShare)}/share worse-price allowance. At the target you gain about ${money(sizing.rewardAtTarget)}.</p></section>` : '';
   return `${planCard}
     <section class="card"><h2>Checks</h2><ul class="rows">${ev.checks.map((c) => `<li><div>${tag(c.status)} <b>${esc(c.label)}</b>${c.required ? '' : ' <span class="muted small">(optional)</span>'}<div class="small muted">${esc(c.detail)}</div></div></li>`).join('')}</ul>
       ${quoteFix ? agentFinding(i.symbol, 'quote') : ''}
       ${fundingFix ? agentFinding(i.symbol, 'funding') : ''}
       ${quoteFix ? `<form class="form inline" data-form="quote" data-symbol="${esc(i.symbol)}">${field(`Price in Kite now for ${esc(i.symbol)} ₹`, num('price', '', 'required'))}<button class="btn">Save fresh price</button></form>` : ''}
-      ${fundingFix ? `<form class="form inline" data-form="funding" data-symbol="${esc(i.symbol)}">${field('MTF own cash needed % (from Kite today)', num('marginPct', '', 'required min="1" max="100"'))}<button class="btn">Save requirement</button></form>` : ''}
+      ${fundingFix ? `<form class="form inline" data-form="funding" data-symbol="${esc(i.symbol)}">${fundingFields('MTF limit from Kite today, as', fundingMode())}<button class="btn">Save requirement</button></form>` : ''}
     </section>
     <form class="card form" data-form="approve" data-id="${esc(i.id)}"><h2>Your decision</h2>
       ${attest.length ? `<fieldset><legend>Answer the checklist yourself</legend>${attest.map((c) => `<label class="check"><input type="checkbox" name="answer:${esc(c.id.slice(5))}"> <span>${esc(c.label)}</span></label>`).join('')}</fieldset>` : ''}
@@ -315,7 +338,7 @@ function evidenceFor(i) {
 }
 
 function evidenceRow(e) {
-  const value = e.kind === 'quote' ? price(e.price) : e.kind === 'funding' ? `${e.marginPct}% own cash` : esc(e.summary);
+  const value = e.kind === 'quote' ? price(e.price) : e.kind === 'funding' ? `up to ${funding(e.marginPct)}` : esc(e.summary);
   return `<li><div><b>${esc(e.symbol)}</b> <span class="tag tag-muted">${esc(e.kind)}</span> ${value}<div class="small muted">${byLine(e.by)} · observed ${when(e.observedAt)}${e.confirms ? ' · confirmed against Kite' : ''}</div>${sourcesList(e.sources)}</div>${confirmButton(e)}</li>`;
 }
 
@@ -323,13 +346,13 @@ function evidenceRow(e) {
 function confirmButton(e) {
   if (!['quote', 'funding'].includes(e.kind) || e.by === 'owner') return '';
   if (S.evidence.some((x) => x.confirms === e.id)) return '<span class="tag tag-ok">Confirmed</span>';
-  const label = e.kind === 'quote' ? `Kite shows ${price(e.price)} now` : `Kite needs ${e.marginPct}% today`;
+  const label = e.kind === 'quote' ? `Kite shows ${price(e.price)} now` : `Kite allows ${lev(e.marginPct)} today`;
   return `<button class="btn" data-action="confirm-evidence" data-id="${esc(e.id)}">${label}: confirm</button>`;
 }
 
 function agentFinding(symbol, kind) {
   const e = S.evidence.find((x) => x.symbol === symbol && x.kind === kind);
-  return e && e.by !== 'owner' && !S.evidence.some((x) => x.confirms === e.id) ? `<div class="confirm-row"><span class="small">${byLine(e.by)} found ${kind === 'quote' ? price(e.price) : `${e.marginPct}%`} at ${when(e.observedAt)}</span>${confirmButton(e)}</div>` : '';
+  return e && e.by !== 'owner' && !S.evidence.some((x) => x.confirms === e.id) ? `<div class="confirm-row"><span class="small">${byLine(e.by)} found ${kind === 'quote' ? price(e.price) : `up to ${funding(e.marginPct)}`} at ${when(e.observedAt)}</span>${confirmButton(e)}</div>` : '';
 }
 
 function sourcesList(list) {
@@ -340,12 +363,12 @@ function sourcesList(list) {
 function lotsTable(lots, closed = false) {
   if (!lots.length) return '<p class="muted">None.</p>';
   return `<div class="table-wrap"><table><thead><tr><th>Stock</th><th>Type</th><th class="num">Shares</th><th class="num">Buy price</th><th class="num">${closed ? 'Result' : 'Stop'}</th><th class="num">${closed ? 'Charges' : 'Risk left'}</th><th>Bought</th></tr></thead><tbody>
-    ${lots.map((l) => `<tr><td><b>${esc(l.symbol)}</b> <span class="small muted">${esc(l.exchange)}</span></td><td>${l.buyType === 'mtf' ? `MTF ${(100 / l.marginPct).toFixed(1)}×` : 'Regular'}</td><td class="num mono">${closed ? l.qty : `${l.remaining}${l.remaining !== l.qty ? ` of ${l.qty}` : ''}`}</td><td class="num mono">${price(l.entry)}</td><td class="num mono">${closed ? money(l.realised) : price(l.stop)}</td><td class="num mono">${closed ? money(l.sales.reduce((a, s) => a + s.charges, 0)) : money(l.risk)}</td><td>${esc(l.date)}</td></tr>`).join('')}
+    ${lots.map((l) => `<tr><td><b>${esc(l.symbol)}</b> <span class="small muted">${esc(l.exchange)}</span></td><td>${l.buyType === 'mtf' ? `MTF ${lev(l.marginPct)}` : 'Regular'}</td><td class="num mono">${closed ? l.qty : `${l.remaining}${l.remaining !== l.qty ? ` of ${l.qty}` : ''}`}</td><td class="num mono">${price(l.entry)}</td><td class="num mono">${closed ? money(l.realised) : price(l.stop)}</td><td class="num mono">${closed ? money(l.sales.reduce((a, s) => a + s.charges, 0)) : money(l.risk)}</td><td>${esc(l.date)}</td></tr>`).join('')}
   </tbody></table></div>`;
 }
 
 function lotCard(l) {
-  return `<article class="lot"><div class="card-head"><h3>${esc(l.symbol)} · ${l.remaining} shares at ${price(l.entry)}</h3><span class="muted small">${l.buyType === 'mtf' ? `MTF ${(100 / l.marginPct).toFixed(1)}×` : 'Regular'} · bought ${esc(l.date)}</span></div>
+  return `<article class="lot"><div class="card-head"><h3>${esc(l.symbol)} · ${l.remaining} shares at ${price(l.entry)}</h3><span class="muted small">${l.buyType === 'mtf' ? `MTF ${lev(l.marginPct)}` : 'Regular'} · bought ${esc(l.date)}</span></div>
     <p class="small">Stop ${price(l.stop)} · target ${price(l.target)} · loss if stop hit ≈ ${money(l.risk)}${l.realised ? ` · realised so far ${money(l.realised)}` : ''}</p>
     <div class="actions"><details><summary class="btn">Record a sale</summary>${saleForm(l)}</details>
     <details><summary class="btn">Move stop</summary><form class="form inline" data-form="stop" data-id="${esc(l.id)}">${field('New stop ₹', num('stop', l.stop, 'required'))}<button class="btn">Save</button></form></details></div></article>`;
@@ -473,7 +496,7 @@ function describe(e) {
 const forms = {
   async plan(form, data, submitter) {
     drafts.plan = data;
-    const plan = { exchange: data.exchange, buyType: data.buyType, marginPct: data.marginPct, entry: data.entry, stop: data.stop, target: data.target, days: data.days, qty: data.qty };
+    const plan = { exchange: data.exchange, buyType: data.buyType, ...(data.buyType === 'mtf' ? fundingInput(data) : {}), entry: data.entry, stop: data.stop, target: data.target, days: data.days, qty: data.qty };
     if (submitter?.value === 'preview') {
       const r = await act('plan.preview', plan);
       const z = r.sizing;
@@ -490,7 +513,7 @@ const forms = {
     toast('Price saved. It counts for 5 minutes.');
   },
   async funding(form, data) {
-    await act('evidence.add', { kind: 'funding', symbol: form.dataset.symbol || data.symbol, marginPct: data.marginPct, summary: data.summary || 'Kite MTF list' });
+    await act('evidence.add', { kind: 'funding', symbol: form.dataset.symbol || data.symbol, ...fundingInput(data), summary: data.summary || 'Kite MTF list' });
     toast('MTF requirement saved for today.');
   },
   async evidence(form, data) {
@@ -600,12 +623,38 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// Funding fields: convert the typed value when the mode flips, keep the hint live,
+// and hide them for Regular buys.
+document.addEventListener('change', (e) => {
+  const box = e.target.closest('[data-funding]');
+  if (box && e.target.name === 'fundingMode') {
+    const mode = e.target.value;
+    const v = Number(box.querySelector('[name=fundingValue]').value);
+    try { localStorage.setItem('fundingMode', mode); } catch { /* preference only */ }
+    box.outerHTML = fundingFields(box.dataset.label, mode, v > 0 ? trim(100 / v) : '');
+    document.querySelector('[data-funding] [name=fundingMode]')?.focus();
+  }
+  if (e.target.name === 'buyType') syncFunding(e.target.form);
+});
+document.addEventListener('input', (e) => {
+  const box = e.target.closest('[data-funding]');
+  if (box && e.target.name === 'fundingValue') {
+    box.querySelector('.funding-hint').textContent = fundingHint(box.querySelector('[name=fundingMode]').value, e.target.value);
+  }
+});
+function syncFunding(form) {
+  const type = form?.elements.buyType;
+  const box = form?.querySelector('[data-funding]');
+  if (type && box) box.hidden = type.value !== 'mtf';
+}
+
 // ---------- routing ----------
 
 function render() {
   const [route = 'today', arg] = location.hash.replace(/^#\/?/, '').split('/');
   const page = pages[route] ?? pages.today;
   main.innerHTML = page(arg && decodeURIComponent(arg));
+  document.querySelectorAll('form').forEach(syncFunding);
   // Fill the activity/ledger lists only after the page markup exists.
   if (page === pages.today || page === pages.ledger) loadLedger();
   for (const a of document.querySelectorAll('.side a')) a.toggleAttribute('aria-current', a.dataset.route === route || (route === 'request' && a.dataset.route === 'requests'));
@@ -618,7 +667,11 @@ function render() {
     : `<p class="small">Agents: ${S.agents.filter((a) => !a.revoked && a.scope !== 'off').length} active</p><button class="btn danger" data-action="pause">Pause all agents</button>`;
 }
 
-window.addEventListener('hashchange', () => { main.focus(); render(); });
+window.addEventListener('hashchange', () => {
+  if (!S) return; // first load still running; it renders the current hash when done
+  main.focus();
+  render();
+});
 
 setInterval(async () => {
   if (document.hidden || document.activeElement?.closest('form, details[open]') || document.querySelector('details[open]')) return;

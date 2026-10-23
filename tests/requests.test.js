@@ -128,3 +128,27 @@ test('this week’s losses pause new buys', () => {
   const second = agent.run(C.submitIntent, { kind: 'buy', symbol: 'XYZ', strategyId: 'breakout', thesis: 'x', plan: PLAN });
   assert.equal(status(checks(d, second.id, BREAKOUT_ANSWERS), 'weekly'), 'fail');
 });
+
+test('leverage and own cash % are interchangeable for plans and MTF requirements', () => {
+  const d = desk();
+  const agent = d.addAgent('propose');
+  const byLev = agent.run(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'breakout', thesis: 'x', plan: { ...PLAN, marginPct: undefined, leverage: 2 } });
+  const byPct = buy(agent);
+  const a = checks(d, byLev.id), b = checks(d, byPct.id);
+  assert.equal(a.plan.marginPct, 50);
+  assert.deepEqual(a.sizing, b.sizing);
+  assert.throws(() => agent.run(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'breakout', thesis: 'x', plan: { ...PLAN, marginPct: 40, leverage: 2 } }), /means 50% own cash, not 40%/);
+  assert.throws(() => agent.run(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'breakout', thesis: 'x', plan: { ...PLAN, marginPct: undefined, leverage: 6 } }), /1× to 5×/);
+});
+
+test('a 3× plan passes a Kite limit recorded as 33.33% (rounded)', () => {
+  const d = desk();
+  const agent = d.addAgent('propose');
+  d.owner(C.addEvidence, { kind: 'funding', symbol: 'ABC', marginPct: 33.33, summary: 'Kite' });
+  const { id } = agent.run(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'breakout', thesis: 'x', plan: { ...PLAN, marginPct: undefined, leverage: 3 } });
+  assert.equal(status(checks(d, id), 'funding'), 'pass');
+  d.owner(C.addEvidence, { kind: 'funding', symbol: 'ABC', leverage: 2.5, summary: 'Kite' });
+  const ev = checks(d, id);
+  assert.equal(status(ev, 'funding'), 'fail');
+  assert.match(ev.checks.find((c) => c.id === 'funding').detail, /at most 2\.5× \(40% own cash\)/);
+});

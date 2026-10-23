@@ -123,6 +123,9 @@ legend { font-weight: 600; padding: 0 4px; }
 .check.inline { display: inline-flex; margin-right: 12px; }
 .check input[type="number"], .check input:not([type]) { width: 90px; }
 .item-row { margin-bottom: 4px; }
+.funding { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.grid > .funding { grid-column: 1 / -1; }
+.funding[hidden] { display: none; }
 .confirm-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 10px 12px; background: var(--ask-bg); border-radius: 8px; }
 
 .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #c5cad3; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; text-decoration: none; cursor: pointer; }

@@ -4,7 +4,7 @@
 
 import { UserError, validateSettingsPatch, FIXED } from './settings.js';
 import { evaluate, orderTicket, planProblem, lotPlan } from './rules.js';
-import { estimateCosts, FEE_DEFAULTS } from './fees.js';
+import { estimateCosts, resolveMarginPct, FEE_DEFAULTS } from './fees.js';
 import { validateSchedule } from './schedule.js';
 import { daysBetween, indiaDate, isDate } from './time.js';
 import { EVIDENCE_KINDS, NEEDS_OWNER_CONFIRMATION } from './evidence.js';
@@ -135,7 +135,7 @@ export function addEvidence(state, input, { actor, newId, now }) {
   };
   if (kind === 'quote') data.price = positive(input.price, 'Price');
   if (kind === 'funding') {
-    data.marginPct = positive(input.marginPct, 'Own cash %');
+    data.marginPct = positive(resolveMarginPct({ buyType: 'mtf', marginPct: input.marginPct, leverage: input.leverage }), 'Own cash % (or leverage)');
     if (data.marginPct > 100) throw new UserError('Own cash % cannot be above 100.');
   }
   return { events: [{ type: 'evidence.added', data }], result: { id: data.id } };
@@ -201,7 +201,7 @@ export function submitIntent(state, input, { actor, newId, now }) {
     const plan = {
       exchange: p.exchange ?? 'NSE',
       buyType: p.buyType,
-      marginPct: p.buyType === 'regular' ? 100 : p.marginPct,
+      marginPct: resolveMarginPct(p),
       entry: p.entry, stop: p.stop, target: p.target, days: p.days,
       ...(p.qty !== undefined ? { qty: p.qty } : {}),
       ...(p.exchange === 'BSE' && Number.isFinite(p.bseRatePct) ? { bseRatePct: p.bseRatePct } : {}),

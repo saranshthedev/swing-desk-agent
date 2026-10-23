@@ -5,6 +5,8 @@
 // pages below and update `checkedOn`. Every approved trade stores a frozen copy of
 // the rates it used, so later edits never rewrite historical costs.
 
+import { UserError } from './settings.js';
+
 export const FEE_DEFAULTS = Object.freeze({
   checkedOn: '2026-10-22',
   source: 'https://zerodha.com/charges/ · https://zerodha.com/mtf/',
@@ -35,6 +37,27 @@ export function validFees(f) {
 export function marginPctOf(plan) {
   return plan.buyType === 'regular' ? 100 : plan.marginPct;
 }
+
+/**
+ * Brokers quote MTF funding either as leverage (2×) or as own cash % (50%). They are the same
+ * thing: own cash % = 100 ÷ leverage. Accept either (or both, if they agree) and return own cash %.
+ */
+export function resolveMarginPct({ buyType, marginPct, leverage }) {
+  if (buyType === 'regular') return 100;
+  const given = (v) => v !== undefined && v !== null && v !== '';
+  if (given(leverage) && (!Number.isFinite(leverage) || leverage < 1)) throw new UserError('Leverage must be 1× or more.');
+  if (given(leverage) && given(marginPct) && Math.abs(100 / leverage - marginPct) > 0.01) {
+    throw new UserError(`Leverage ${leverage}× means ${fmt(100 / leverage)}% own cash, not ${marginPct}%. Give just one of them.`);
+  }
+  return given(leverage) ? 100 / leverage : marginPct;
+}
+
+export const leverageOf = (marginPct) => 100 / marginPct;
+
+/** "2.5× (40% own cash)" */
+export const fundingLabel = (marginPct) => `${fmt(100 / marginPct)}× (${fmt(marginPct)}% own cash)`;
+
+const fmt = (n) => String(Number(n.toFixed(2)));
 
 export function exchangePct(plan, f) {
   if ((plan.exchange || 'NSE') === 'NSE') return f.exchangePctNSE;

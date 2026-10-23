@@ -197,6 +197,17 @@ try {
   await shot('positions');
   await shot('positions', 390);
 
+  // MTF funding can be entered as leverage or own cash %; switching converts the typed value.
+  await go('#/plan');
+  await js(`(() => { const f = document.querySelector('form[data-form=plan]'); f.elements.fundingMode.value = 'leverage'; f.elements.fundingMode.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await js(`(() => { const i = document.querySelector('form[data-form=plan]').elements.fundingValue; i.value = '2.5'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert.ok((await js('document.querySelector("[data-funding] .funding-hint").textContent')).includes('2.5× (40% own cash). You pay 40% and borrow 60%'));
+  await js(`(() => { const s = document.querySelector('form[data-form=plan]').elements.fundingMode; s.value = 'cash'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert.equal(await js('document.querySelector("form[data-form=plan]").elements.fundingValue.value'), '40');
+  await js(`(() => { const s = document.querySelector('form[data-form=plan]').elements.buyType; s.value = 'regular'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert.equal(await js('document.querySelector("[data-funding]").hidden'), true);
+  await shot('plan-funding', 390);
+
   // Persistence across a reload; ledger intact.
   await js('location.reload()');
   await go('#/positions');
