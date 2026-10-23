@@ -25,6 +25,8 @@ Read `README.md` and `docs/RETHINK.md` first.
 | `bin/desk.js` | CLI |
 | `tests/` | `node --test` suites using in-memory or temporary databases |
 
+The server serves web/ files from disk on every request but keeps its own code in memory. When the page starts relying on new server data, bump API_VERSION in src/version.js and CLIENT_API in web/app.js together; an older running server then shows a restart banner instead of broken pages.
+
 State changes only through commands that return events. Reducers in `src/core/state.js` must be
 deterministic: compute ids, P/L and snapshots in the command, store them in the event.
 

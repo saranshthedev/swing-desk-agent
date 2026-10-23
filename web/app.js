@@ -896,12 +896,37 @@ function syncFunding(form) {
   if (type && box) box.hidden = type.value !== 'mtf';
 }
 
+// ---------- update check ----------
+
+/** Must match API_VERSION in src/version.js. Bump both when the page needs new server data. */
+const CLIENT_API = 2;
+const serverIsOld = () => (S?.meta?.api ?? 1) < CLIENT_API;
+
+/** The server keeps its code in memory; after an update it must be restarted. */
+function restartBanner() {
+  if (!serverIsOld() && !S?.meta?.restartNeeded) return '';
+  return `<div class="banner" role="alert"><b>Swing Desk was updated. Please restart it.</b>
+    Close the black “Swing Desk” window (or press Ctrl + C in it), then double-click <b>Swing Desk</b> on your Desktop (or start.cmd).
+    ${serverIsOld() ? 'Until then, some pages cannot open.' : 'Until then, the newest changes are not active.'}
+    If Claude Code is connected, start a new Claude conversation afterwards too.</div>`;
+}
+
 // ---------- routing ----------
 
 function render() {
   const [route = 'today', ...args] = location.hash.replace(/^#\/?/, '').split('/');
   const page = pages[route] ?? pages.today;
-  main.innerHTML = page(...args.map((a) => decodeURIComponent(a)));
+  let html;
+  try {
+    html = page(...args.map((a) => decodeURIComponent(a)));
+  } catch (err) {
+    // Never leave a page silently unchanged: say what happened and what to do.
+    console.error(err);
+    html = `<section class="card highlight" role="alert"><h1>This page could not open</h1>
+      <p>${serverIsOld() ? 'Swing Desk was updated but the old version is still running. Restart it (see the message above).' : 'Reload the page. If it keeps happening, restart Swing Desk.'}</p>
+      <p class="small muted">Details: ${esc(err.message)}</p></section>`;
+  }
+  main.innerHTML = restartBanner() + html;
   addInfoButtons(main);
   document.querySelectorAll('form').forEach(syncFunding);
   // Fill the activity/ledger lists only after the page markup exists.

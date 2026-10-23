@@ -18,6 +18,7 @@ import { researchStatus } from '../core/rules.js';
 import { RISK_PRESETS, AGENT_PRESETS, PLAYBOOK_TEMPLATES, PLAN_DEFAULTS, matchRiskPreset } from '../core/presets.js';
 import { newId } from '../store/store.js';
 import { backupDir } from '../config.js';
+import { API_VERSION, codeChangedSinceStart } from '../version.js';
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), '../../web');
 const BIN = resolve(dirname(fileURLToPath(import.meta.url)), '../../bin/desk.js');
@@ -81,6 +82,8 @@ export function stateView(store) {
     tasks: Object.values(s.tasks).sort((a, b) => b.dueAt.localeCompare(a.dueAt)).slice(0, 50),
     calls: store.recentCalls(30),
     meta: {
+      api: API_VERSION,
+      restartNeeded: codeChangedSinceStart(),
       settingRules: SETTING_RULES,
       evidenceKinds: EVIDENCE_KINDS,
       ruleKinds: Object.keys(RULES),

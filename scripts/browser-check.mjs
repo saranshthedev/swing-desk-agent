@@ -306,6 +306,36 @@ try {
   assert.equal(focus.tag, 'A', 'Tab should land on a link');
   assert.notEqual(focus.outline, 'none', 'focused links need a visible outline');
 
+  // An old server still running after an update: pages must say "restart", never go dead.
+  const errorsBefore = errors.length;
+  await cdp('Fetch.enable', { patterns: [{ urlPattern: '*/api/state*', requestStage: 'Response' }] });
+  const stripped = new Promise((ok) => {
+    const prev = ws.onmessage;
+    ws.onmessage = async (m) => {
+      prev(m);
+      const msg = JSON.parse(m.data);
+      if (msg.method !== 'Fetch.requestPaused') return;
+      const { body, base64Encoded } = await cdp('Fetch.getResponseBody', { requestId: msg.params.requestId });
+      const state = JSON.parse(base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body);
+      delete state.meta.api; delete state.meta.presets; delete state.meta.checklist; delete state.meta.restartNeeded;
+      await cdp('Fetch.fulfillRequest', { requestId: msg.params.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }], body: Buffer.from(JSON.stringify(state)).toString('base64') });
+      ok();
+    };
+  });
+  await js('location.reload()');
+  await stripped;
+  await cdp('Fetch.disable');
+  await delay(500);
+  await go('#/settings');
+  assert.match(await text(), /Swing Desk was updated. Please restart it./);
+  assert.match(await text(), /This page could not open/);
+  await shot('old-server-banner', 390);
+  errors.splice(errorsBefore); // the simulated failure logs on purpose
+  await js('location.reload()');
+  await delay(800);
+  await go('#/settings');
+  assert.doesNotMatch(await text(), /Please restart it/);
+
   // The flow deliberately triggers two refusals (wrong PIN, approving too early); those 400s are expected.
   const real = errors.filter((e) => !/status of 400 \(Bad Request\) .*\/api\/action\/(settings\.change|intent\.approve)/.test(e));
   assert.deepEqual(real, [], `browser errors:\n${real.join('\n')}`);
