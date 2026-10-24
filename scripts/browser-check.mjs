@@ -220,14 +220,39 @@ try {
   await shot('positions');
   await shot('positions', 390);
 
+  // Symbols link to one page per stock, where everything about it is gathered and can be acted on.
+  await click('main a.sym');
+  await until(() => js('location.hash === "#/stock/SAMPLE"'), 'symbol opens the stock page');
+  await waitText('Open lots');
+  assert.match(await text(), /Evidence\s+\d+/);
+  await js('document.querySelector("form[data-form=note] .fold").click()');
+  await submit('note', { title: 'Watch 580', body: 'Weekly supply zone' });
+  assert.match(await toast(), /Note saved/);
+  await waitText('Watch 580');
+  await shot('stock');
+  await shot('stock', 390);
+  await go('#/stocks');
+  await waitText('1 open lot');
+  await submit('stock-pick', { symbol: 'newco' });
+  await until(() => js('location.hash === "#/stock/NEWCO"'), 'stock search');
+  await waitText('No broker price saved yet.');
+
   // Every form field on these pages has an "i" help button.
-  for (const page of ['#/settings', '#/plan', '#/research', '#/agents', '#/playbooks/new', '#/strategies/new', '#/prepare']) {
+  for (const page of ['#/settings', '#/plan', '#/research', '#/agents', '#/playbooks/new', '#/strategies/new', '#/prepare', '#/stocks', '#/stock/SAMPLE']) {
     await go(page);
     const missing = await js('[...document.querySelectorAll(".field")].filter((f) => !f.querySelector(".info")).map((f) => f.querySelector("label")?.textContent)');
     assert.deepEqual(missing, [], `fields without help on ${page}`);
   }
-  // Keyboard: Enter opens the help, Escape closes it.
+  // Settings sections start folded to their headings; the fold button opens one and it stays open.
   await go('#/settings');
+  assert.equal(await js('document.querySelector("form[data-form=settings]").classList.contains("folded")'), true, 'settings sections start folded');
+  await shot('settings-folded', 390);
+  await js('document.querySelector("form[data-form=settings] .fold").click()');
+  assert.equal(await js('document.querySelector("form[data-form=settings] .fold").getAttribute("aria-expanded")'), 'true');
+  await go('#/today');
+  await go('#/settings');
+  assert.equal(await js('document.querySelector("form[data-form=settings]").classList.contains("folded")'), false, 'an opened section stays open');
+  // Keyboard: Enter opens the help, Escape closes it.
   await js('document.querySelector(".field .info").focus()');
   await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
   await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
@@ -359,6 +384,34 @@ try {
   const afterDisconnect = (await rpc('tools/call', { name: 'desk_status', arguments: {} })).result;
   assert.ok(afterDisconnect.isError, 'a disconnected key can no longer call the desk');
   await shot('agents-disconnected');
+
+  // Trash: the disconnected agent is hidden, restored, then deleted forever with the PIN; the chain stays intact.
+  const trashAgent = async () => {
+    await js('document.querySelector(".agent-gone").open = true');
+    await click('.agent-gone [data-action=trash]');
+    assert.match(await toast(), /Moved to the Trash/);
+    await until(() => js('!document.querySelector(".agent-gone")'), 'agent hidden after trash');
+  };
+  await trashAgent();
+  assert.equal(await js('document.querySelector("#trash-count").textContent'), '1');
+  await go('#/trash');
+  await waitText('In the Trash');
+  await shot('trash', 390);
+  await click('[data-action=restore]');
+  assert.match(await toast(), /Restored/);
+  await go('#/agents');
+  await waitText('Disconnected agents (1)');
+  await trashAgent();
+  await go('#/trash');
+  await js('document.querySelector(".purge").open = true');
+  await submit('trash-purge', { pin: '24681357' });
+  assert.match(await toast(), /Deleted forever/);
+  await waitText('The Trash is empty.');
+  await go('#/ledger');
+  await until(() => js('document.querySelector("#chain")?.innerText.includes("Chain intact")'), 'chain intact after delete forever');
+  assert.match(await text(), /Deleted an agent forever/);
+  assert.ok(await js('document.querySelectorAll("#ledger-rows > li").length <= 25'), 'the ledger shows 25 entries per page');
+  await shot('ledger-paged', 390);
 
   // The flow deliberately triggers two refusals (wrong PIN, approving too early); those 400s are expected.
   const real = errors.filter((e) => !/status of 400 \(Bad Request\) .*\/api\/action\/(settings\.change|intent\.approve)/.test(e));

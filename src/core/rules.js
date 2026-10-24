@@ -52,7 +52,7 @@ export function portfolio(state, now = Date.now()) {
 export function latestEvidence(state, kind, symbol, { ownerOnly = false } = {}) {
   for (let i = state.evidence.length - 1; i >= 0; i--) {
     const e = state.evidence[i];
-    if (e.kind === kind && e.symbol === symbol && (!ownerOnly || e.by === 'owner')) return e;
+    if (!e.trashed && e.kind === kind && e.symbol === symbol && (!ownerOnly || e.by === 'owner')) return e;
   }
   return null;
 }
@@ -97,7 +97,7 @@ export function planProblem(plan) {
 
 function strategyChecks(state, intent, plan, sizing, now, answers) {
   const strategy = state.strategies[intent.strategyId];
-  if (!strategy) return [check('strategy', 'Strategy', 'fail', 'This strategy no longer exists.')];
+  if (!strategy || strategy.trashed) return [check('strategy', 'Strategy', 'fail', 'This strategy no longer exists.')];
   if (!strategy.enabled) return [check('strategy', strategy.name, 'fail', 'This strategy is switched off.')];
   if (strategy.version !== intent.strategyVersion) {
     return [check('strategy', strategy.name, 'fail', `The checklist changed after this request (v${intent.strategyVersion} → v${strategy.version}). Ask for a new request.`)];

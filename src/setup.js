@@ -1,7 +1,7 @@
 // `desk setup` – the guided first-time setup behind setup.cmd / setup.sh.
 
 import { prompter, connect } from './connect.js';
-import { createShortcut, scheduleAdd, scheduleList } from './automation.js';
+import { checkTime, createShortcut, scheduleAdd, scheduleList } from './automation.js';
 import { dataDir } from './config.js';
 import { UserError } from './core/settings.js';
 
@@ -46,8 +46,19 @@ export async function setup(store) {
     console.log('Claude can check for playbook jobs by itself at set times on weekdays.');
     console.log('You also need a playbook in the app (Playbooks page) and the app must be running.');
     if (yes(await p.ask('Set this up now? [y/N]: '), false)) {
-      const answer = await p.ask('At what times? Your computer’s clock, HH:MM, separated by commas [08:50,15:55]: ');
-      for (const time of (answer || '08:50,15:55').split(',').map((t) => t.trim()).filter(Boolean)) {
+      let times;
+      while (!times) {
+        const answer = await p.ask('At what times? Your computer’s clock, HH:MM, separated by commas (press Enter for 08:50,15:55): ');
+        // Accept "[20:00, 22:00]" too: people copy the bracket style of the other prompts.
+        const list = (answer.replace(/[[\]]/g, '') || '08:50,15:55').split(',').map((t) => t.trim()).filter(Boolean);
+        try {
+          times = list.map(checkTime);
+        } catch (err) {
+          if (!(err instanceof UserError)) throw err;
+          console.log(`${err.message} Try again.`);
+        }
+      }
+      for (const time of times) {
         const r = scheduleAdd(time);
         console.log(r.cron ? `Add this line with \`crontab -e\`:\n  ${r.cron}` : `Added: ${r.name} (Mon–Fri)`);
       }

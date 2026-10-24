@@ -74,9 +74,34 @@ const reducers = {
   'task.failed': (s, d, e) => { Object.assign(s.tasks[d.id], { status: 'failed', summary: d.reason, doneAt: e.at }); },
   'task.expired': (s, d) => { s.tasks[d.id].status = 'expired'; },
 
+  // Trash: a flag on the item, never a removed record. Purged items stay flagged for good.
+  'item.trashed': (s, d, e) => { findItem(s, d.kind, d.id).trashed = e.at; },
+  'item.restored': (s, d) => { delete findItem(s, d.kind, d.id).trashed; },
+  'item.purged': (s, d) => { findItem(s, d.kind, d.id).purged = true; },
+
   'pin.changed': () => {},
   'backup.created': () => {},
 };
+
+/** Kinds of item the owner can move to the Trash, and where each lives in the state. */
+export const TRASH_KINDS = ['evidence', 'note', 'request', 'lot', 'strategy', 'playbook', 'agent', 'task'];
+
+export function findItem(state, kind, id) {
+  switch (kind) {
+    case 'evidence': return state.evidence.find((e) => e.id === id);
+    case 'note': return state.notes.find((n) => n.id === id);
+    case 'request': return state.intents[id];
+    case 'lot': return state.lots[id];
+    case 'strategy': return state.strategies[id];
+    case 'playbook': return state.playbooks[id];
+    case 'agent': return state.agents[id];
+    case 'task': return state.tasks[id];
+    default: return undefined;
+  }
+}
+
+/** Not in the Trash and never purged. */
+export const live = (item) => !item.trashed;
 
 /** Event types an agent's daily write quota counts, and those its intent quota counts. */
 const WRITE_TYPES = new Set(['evidence.added', 'note.added', 'task.completed', 'task.failed']);

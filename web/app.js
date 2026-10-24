@@ -23,9 +23,11 @@ const indiaToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice
 const actorName = (actor) => {
   if (actor === 'owner') return 'You';
   if (actor === 'system') return 'Scheduler';
-  const a = S?.agents.find((x) => `agent:${x.id}` === actor);
-  return a ? `${a.name} (agent)` : actor;
+  const name = S?.agentNames?.[actor.replace(/^agent:/, '')];
+  return name ? `${name} (agent)` : actor;
 };
+/** A stock symbol that opens its stock page. */
+const symLink = (sym) => (sym ? `<a class="sym" href="#/stock/${esc(encodeURIComponent(sym))}">${esc(sym)}</a>` : '');
 const byLine = (actor) => (actor === 'owner' ? 'You' : `${esc(actorName(actor))} · <span class="tag tag-warn">not verified</span>`);
 const STATUS_TAG = { pass: 'tag-ok', fail: 'tag-bad', stale: 'tag-warn', ask: 'tag-ask', info: 'tag-muted' };
 const STATUS_TEXT = { pass: 'Pass', fail: 'Fail', stale: 'Needs update', ask: 'Your answer', info: 'Note' };
@@ -63,7 +65,13 @@ const fundingInput = (data) => (data.fundingMode === 'cash' ? { marginPct: data.
 // ---------- server ----------
 
 async function api(path, init = {}) {
-  const res = await fetch(path, { ...init, headers: { 'X-CSRF': csrf, ...(init.body ? { 'Content-Type': 'application/json' } : {}) } });
+  let res;
+  try {
+    res = await fetch(path, { ...init, headers: { 'X-CSRF': csrf, ...(init.body ? { 'Content-Type': 'application/json' } : {}) } });
+  } catch {
+    // The browser only says "Failed to fetch" when the desk is not running.
+    throw new Error('Swing Desk is not running. Double-click Swing Desk on your Desktop (or start.cmd), then reload this page.');
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `Request failed (${res.status}).`);
   return body;
@@ -77,6 +85,9 @@ async function act(name, data) {
 
 async function refresh() {
   S = await api('/api/state');
+  // An older server (not restarted after an update) does not send these; pages still open and show the restart banner.
+  S.trash ??= [];
+  S.agentNames ??= Object.fromEntries(S.agents.map((a) => [a.id, a.name]));
   ledgerCache = null;
 }
 
@@ -189,6 +200,74 @@ const pinField = () => field('Approval PIN', '<input name="pin" type="password" 
 const options = (list, selected) => list.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(selected) ? 'selected' : ''}>${esc(l)}</option>`).join('');
 const tag = (status) => `<span class="tag ${STATUS_TAG[status] || 'tag-muted'}">${STATUS_TEXT[status] || esc(status)}</span>`;
 
+// ---------- trash, paging, folding ----------
+
+const KIND_LABEL = { evidence: 'Evidence', note: 'Note', request: 'Request', lot: 'Closed lot', strategy: 'Strategy', playbook: 'Playbook', agent: 'Agent', task: 'Playbook job' };
+const TRASH_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2zM6 9h12l-1 12H7L6 9zm4 2v8h1.5v-8H10zm3.5 0v8H15v-8h-1.5z"/></svg>';
+/** Small icon that moves an item to the Trash (it can be restored from there). */
+const trashBtn = (kind, id, what) => `<button type="button" class="icon-btn" data-action="trash" data-kind="${kind}" data-id="${esc(id)}" aria-label="Move ${esc(what)} to the Trash" title="Move to the Trash">${TRASH_ICON}</button>`;
+const FINISHED = new Set(['filled', 'rejected', 'withdrawn', 'expired']);
+
+const pageAt = {}; // list key → page shown (1 = first)
+/** One page of a long list plus Previous / Next buttons. */
+function paged(key, list, size = 10) {
+  const total = Math.max(1, Math.ceil(list.length / size));
+  const at = Math.min(Math.max(1, pageAt[key] ?? 1), total);
+  const btn = (to, label, off) => `<button type="button" class="btn" data-action="page" data-key="${esc(key)}" data-to="${to}" ${off ? 'disabled' : ''}>${label}</button>`;
+  const nav = total > 1 ? `<nav class="pager" data-key="${esc(key)}" aria-label="Pages">${btn(at - 1, '‹ Previous', at === 1)}<span class="small muted">Page ${at} of ${total} · ${list.length} in all</span>${btn(at + 1, 'Next ›', at === total)}</nav>` : '';
+  return { items: list.slice((at - 1) * size, at * size), nav };
+}
+
+// Every card with a heading can be folded to its heading. The choice is remembered per page.
+const FOLDED_AT_FIRST = new Set(['strategies', 'playbooks', 'settings']);
+const folds = {};
+function isFolded(key, byDefault) {
+  if (key in folds) return folds[key];
+  try {
+    const v = localStorage.getItem(`fold:${key}`);
+    if (v !== null) return v === '1';
+  } catch { /* preference only */ }
+  return byDefault;
+}
+function setFold(card, folded) {
+  const button = card.querySelector('.fold');
+  folds[button.dataset.foldKey] = folded;
+  try { localStorage.setItem(`fold:${button.dataset.foldKey}`, folded ? '1' : '0'); } catch { /* preference only */ }
+  card.classList.toggle('folded', folded);
+  button.setAttribute('aria-expanded', String(!folded));
+}
+function addFolds(root, route, byDefault) {
+  for (const card of root.querySelectorAll('.card:not(details):not(.highlight)')) {
+    const first = card.firstElementChild;
+    const heading = first?.matches('h2') ? first : first?.matches('.card-head') ? first.querySelector('h2, h3') : null;
+    if (!heading || heading.querySelector('.fold')) continue;
+    const key = `${route}|${card.dataset.fold ?? heading.textContent.trim()}`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'fold';
+    button.dataset.foldKey = key;
+    button.setAttribute('aria-label', 'Show or hide this section');
+    heading.prepend(button);
+    heading.classList.add('fold-head');
+    const folded = isFolded(key, byDefault || card.hasAttribute('data-start-folded'));
+    card.classList.toggle('folded', folded);
+    button.setAttribute('aria-expanded', String(!folded));
+  }
+}
+document.addEventListener('click', (e) => {
+  const head = e.target.closest('.fold-head');
+  if (!head || (e.target.closest('a, button, input, select, textarea') && !e.target.closest('.fold'))) return;
+  const card = head.closest('.card');
+  setFold(card, !card.classList.contains('folded'));
+});
+
+function trashRow(t) {
+  return `<li><div><b>${esc(t.label)}</b> <span class="tag tag-muted">${KIND_LABEL[t.kind] ?? esc(t.kind)}</span><div class="small muted">Moved here ${when(t.at)}</div></div>
+    <div class="row-tools"><button type="button" class="btn" data-action="restore" data-kind="${t.kind}" data-id="${esc(t.id)}">Restore</button>
+      <details class="purge"><summary class="btn danger">Delete forever</summary><form class="form" data-form="trash-purge" data-kind="${t.kind}" data-id="${esc(t.id)}">
+        <p class="small">It can no longer be restored. The ledger keeps a line saying something was deleted, without its contents.</p>${pinField()}<button class="btn danger">Delete forever</button></form></details></div></li>`;
+}
+
 // ---------- pages ----------
 
 const pages = {
@@ -228,7 +307,8 @@ const pages = {
       <p class="lead">Agents (and you) send requests. The desk checks them with fixed rules. Only you approve, with your PIN. Approving never places an order: it gives you an order ticket for Kite.</p>
       ${groups.map((g) => {
         const list = S.intents.filter((i) => i.status === g);
-        return list.length ? `<section class="card"><h2>${g[0].toUpperCase() + g.slice(1)}</h2><ul class="rows">${list.map(requestRow).join('')}</ul></section>` : '';
+        const p = paged(`requests-${g}`, list);
+        return list.length ? `<section class="card"><h2>${g[0].toUpperCase() + g.slice(1)} <span class="small muted">${list.length}</span></h2><ul class="rows">${p.items.map((i) => requestRow(i)).join('')}</ul>${p.nav}</section>` : '';
       }).join('') || '<p class="muted">No requests yet.</p>'}`;
   },
 
@@ -236,20 +316,20 @@ const pages = {
     const i = S.intents.find((x) => x.id === id);
     if (!i) return '<p>That request was not found.</p>';
     const title = i.kind === 'buy' ? `Buy ${i.symbol}` : i.kind === 'exit' ? `Sell ${i.symbol}` : 'Change risk settings';
-    const head = `<header class="page-head"><div><a href="#/requests">Back to requests</a><h1>${esc(title)} <span class="tag tag-muted">${esc(i.status)}</span></h1>
-      <p class="muted">From ${byLine(i.by)} · ${when(i.at)}${i.status === 'pending' ? ` · expires ${when(i.expiresAt)}` : ''}${i.strategyName ? ` · strategy: ${esc(i.strategyName)}` : ''}</p></div></header>`;
+    const head = `<header class="page-head"><div><a href="#/requests">Back to requests</a><h1>${i.symbol ? esc(title).replace(esc(i.symbol), symLink(i.symbol)) : esc(title)} <span class="tag tag-muted">${esc(i.status)}</span></h1>
+      <p class="muted">From ${byLine(i.by)} · ${when(i.at)}${i.status === 'pending' ? ` · expires ${when(i.expiresAt)}` : ''}${i.strategyName ? ` · strategy: ${esc(i.strategyName)}` : ''}</p></div>${FINISHED.has(i.status) ? trashBtn('request', i.id, 'this request') : ''}</header>`;
     const thesis = `<section class="card"><h2>Reason given</h2>${i.by === 'owner' ? '' : '<p class="small"><span class="tag tag-warn">Written by a model · not verified</span></p>'}<blockquote>${esc(i.thesis)}</blockquote>${evidenceFor(i)}</section>`;
     const chart = i.symbol ? tvChart(i.symbol) : '';
     if (i.status === 'pending') return head + pendingRequest(i) + thesis + chart;
     return head + decidedRequest(i) + thesis + chart;
   },
 
-  plan() {
+  plan(symbol) {
     const strategies = S.strategies.filter((s) => s.enabled);
     const first = strategies[0]?.id;
     const pd = S.meta.presets.plan[first] ?? S.meta.presets.plan.default;
     const lev2 = pd.leverage ?? 2;
-    const d = drafts.plan ?? { exchange: 'NSE', buyType: pd.buyType, fundingMode: fundingMode(), fundingValue: fundingMode() === 'cash' ? trim(100 / lev2) : lev2, days: pd.days, strategyId: first };
+    const d = { ...(drafts.plan ?? { exchange: 'NSE', buyType: pd.buyType, fundingMode: fundingMode(), fundingValue: fundingMode() === 'cash' ? trim(100 / lev2) : lev2, days: pd.days, strategyId: first }), ...(symbol ? { symbol: symbol.toUpperCase() } : {}) };
     return `<header class="page-head"><h1>New plan</h1></header>
       <p class="lead">Your own plan goes through the same checks as an agent’s. Leave shares blank and the desk sizes it from your limits.</p>
       <form class="card form" data-form="plan">
@@ -277,7 +357,61 @@ const pages = {
     return `<header class="page-head"><h1>Positions</h1></header>
       <p class="lead">Each buy fill is its own lot with its own price and date. Selling part of a lot keeps the rest open at the same buy price.</p>
       <section class="card"><h2>Open lots</h2>${open.length ? open.map(lotCard).join('') : '<p class="muted">No open lots.</p>'}</section>
-      <section class="card"><h2>Closed lots</h2>${closed.length ? lotsTable(closed, true) : '<p class="muted">None yet.</p>'}</section>`;
+      <section class="card"><h2>Closed lots</h2>${closed.length ? (({ items, nav }) => lotsTable(items, true) + nav)(paged('lots-closed', closed)) : '<p class="muted">None yet.</p>'}</section>`;
+  },
+
+  stocks() {
+    const list = stockIndex();
+    const p = paged('stocks', list, 15);
+    return `<header class="page-head"><h1>Stocks</h1></header>
+      <p class="lead">Every stock you or an agent has worked on. Open one to see its requests, lots, prices, evidence and notes in one place, and to act on it. Any stock symbol in the app opens its page too.</p>
+      <form class="card form inline" data-form="stock-pick">${field('Stock', '<input name="symbol" required autocapitalize="characters" placeholder="TATAMOTORS">')}<button class="btn primary">Open stock</button></form>
+      <section class="card"><h2>Your stocks <span class="small muted">${list.length}</span></h2>${list.length ? `<ul class="rows">${p.items.map(stockRow).join('')}</ul>${p.nav}` : '<p class="muted">None yet. Type a stock above to start.</p>'}</section>`;
+  },
+
+  stock(symbol = '') {
+    const sym = symbol.toUpperCase().replace(/[^A-Z0-9&._-]/g, '');
+    if (!sym) return pages.stocks();
+    const market = sym === S.meta.checklist.market;
+    const intents = S.intents.filter((i) => i.symbol === sym);
+    const open = S.lots.filter((l) => l.symbol === sym && l.status === 'open');
+    const closed = S.lots.filter((l) => l.symbol === sym && l.status === 'closed');
+    const evidence = S.evidence.filter((e) => e.symbol === sym);
+    const notes = S.notes.filter((n) => n.symbol === sym);
+    const quote = evidence.find((e) => e.kind === 'quote');
+    const strategy = S.strategies.find((s) => s.enabled)?.id ?? '';
+    const rq = paged(`stock-requests-${sym}`, intents);
+    const ev = paged(`stock-evidence-${sym}`, evidence);
+    const nt = paged(`stock-notes-${sym}`, notes, 5);
+    const kinds = Object.entries(S.meta.evidenceKinds).filter(([k]) => !['quote', 'funding'].includes(k));
+    return `<header class="page-head"><div><a href="#/stocks">All stocks</a><h1>${esc(sym)}</h1>
+        <p class="muted">${market ? 'Whole-market checks saved once a day count for every stock.' : quote ? `Last broker price ${price(quote.price)} · ${byLine(quote.by)} · ${when(quote.observedAt)}` : 'No broker price saved yet.'}</p></div>
+        ${market ? '' : `<div class="actions"><a class="btn" href="#/prepare/${esc(strategy)}/${esc(encodeURIComponent(sym))}">Prepare</a><a class="btn primary" href="#/plan/${esc(encodeURIComponent(sym))}">New plan</a></div>`}</header>
+      <div class="cols">
+        <div class="col-main">
+          ${open.length ? `<section class="card"><h2>Open lots <span class="small muted">${open.length}</span></h2>${open.map(lotCard).join('')}</section>` : ''}
+          ${market ? '' : `<section class="card"><h2>Requests <span class="small muted">${intents.length}</span></h2>${intents.length ? `<ul class="rows">${rq.items.map((i) => requestRow(i)).join('')}</ul>${rq.nav}` : '<p class="muted">No requests for this stock.</p>'}</section>`}
+          <section class="card"><h2>Evidence <span class="small muted">${evidence.length}</span></h2>${evidence.length ? `<ul class="rows">${ev.items.map((e) => evidenceRow(e, true)).join('')}</ul>${ev.nav}` : '<p class="muted">None yet. Save some with the forms on this page, or ask Claude.</p>'}</section>
+          <section class="card"><h2>Notes <span class="small muted">${notes.length}</span></h2>${notes.length ? nt.items.map(noteHtml).join('') + nt.nav : '<p class="muted">No notes yet.</p>'}</section>
+          ${closed.length ? `<section class="card"><h2>Closed lots <span class="small muted">${closed.length}</span></h2>${lotsTable(closed, true)}</section>` : ''}
+          ${market ? '' : tvChart(sym)}
+        </div>
+        <div class="col-side">
+          ${market ? '' : `<form class="card form" data-form="quote" data-symbol="${esc(sym)}" data-start-folded><h2>Broker price</h2><p class="small muted">Copy the price from Kite now. It counts for 5 minutes.</p>
+            ${field('Price ₹', num('price', '', 'required'))}<button class="btn primary">Save price</button></form>
+          <form class="card form" data-form="funding" data-symbol="${esc(sym)}" data-start-folded><h2>MTF requirement</h2><p class="small muted">From Kite’s MTF stock list, today. Counts for today only.</p>
+            ${fundingFields('Kite shows it as', fundingMode())}${field('Where you checked', '<input name="summary" value="Kite MTF list">')}<button class="btn primary">Save requirement</button></form>`}
+          <form class="card form" data-form="evidence" data-symbol="${esc(sym)}" data-start-folded><h2>Other evidence</h2>
+            ${field('Kind', `<select name="kind">${options(kinds, market ? 'macro' : 'news')}</select>`)}
+            ${field('What you found', '<textarea name="summary" rows="3" required></textarea>')}
+            ${field('Link (optional)', '<input name="source" type="url">')}
+            <button class="btn primary">Save evidence</button></form>
+          <form class="card form" data-form="note" data-symbol="${esc(sym)}" data-start-folded><h2>Note</h2>
+            ${field('Title', '<input name="title" required maxlength="200">')}
+            ${field('Note', '<textarea name="body" rows="4" required></textarea>')}
+            <button class="btn primary">Save note</button></form>
+        </div>
+      </div>`;
   },
 
   research() {
@@ -300,8 +434,8 @@ const pages = {
             <button class="btn primary">Save evidence</button></form>
         </div>
         <div class="col-main">
-          <section class="card"><h2>Evidence</h2>${S.evidence.length ? `<ul class="rows">${S.evidence.map(evidenceRow).join('')}</ul>` : '<p class="muted">None yet.</p>'}</section>
-          <section class="card"><h2>Notes</h2>${S.notes.length ? S.notes.map((n) => `<article class="note"><h3>${esc(n.symbol ? `${n.symbol} · ` : '')}${esc(n.title)}</h3><p class="small muted">${byLine(n.by)} · ${when(n.at)}</p><p class="pre">${esc(n.body)}</p>${sourcesList(n.sources)}</article>`).join('') : '<p class="muted">Agents with Draft access can add notes.</p>'}</section>
+          <section class="card"><h2>Evidence</h2>${S.evidence.length ? (({ items, nav }) => `<ul class="rows">${items.map((e) => evidenceRow(e, true)).join('')}</ul>${nav}`)(paged('evidence', S.evidence)) : '<p class="muted">None yet.</p>'}</section>
+          <section class="card"><h2>Notes</h2>${S.notes.length ? (({ items, nav }) => items.map(noteHtml).join('') + nav)(paged('notes', S.notes, 5)) : '<p class="muted">Agents with Draft access can add notes.</p>'}</section>
         </div>
       </div>`;
   },
@@ -310,7 +444,7 @@ const pages = {
     if (id) return strategyEditor(id);
     return `<header class="page-head"><h1>Strategies</h1><a class="btn primary" href="#/strategies/new">New strategy</a></header>
       <p class="lead">Each strategy has its own checklist. Every buy must name one. The built-in strategies are starting templates, not recommendations.</p>
-      ${S.strategies.map((s) => `<section class="card"><div class="card-head"><h2>${esc(s.name)} <span class="tag tag-muted">v${s.version}</span>${s.enabled ? '' : ' <span class="tag tag-muted">off</span>'}</h2><a href="#/strategies/${esc(s.id)}">Edit</a></div>
+      ${S.strategies.map((s) => `<section class="card" data-fold="${esc(s.id)}"><div class="card-head"><h2>${esc(s.name)} <span class="tag tag-muted">v${s.version}</span>${s.enabled ? '' : ' <span class="tag tag-muted">off</span>'}</h2><div class="row-tools"><a href="#/strategies/${esc(s.id)}">Edit</a>${trashBtn('strategy', s.id, `strategy ${s.name}`)}</div></div>
         <p class="muted">${esc(s.description)} · ${s.items.length} checks · <a href="#/prepare/${esc(s.id)}">Prepare a stock</a></p>${strategyItemsHtml(s.items, { checklist: S.meta.checklist, esc })}</section>`).join('')}`;
   },
 
@@ -352,7 +486,7 @@ const pages = {
             <pre class="code">Use swing-desk. Call get_research_status for ${esc(sym)} with strategy ${esc(sid)}. For every item that is not passing, research it with free sources and save it with add_evidence (whole-market checks under MARKET), with links. Then tell me what you found and what I still need to check myself.</pre></section>`;
       }
     }
-    return `<header class="page-head"><div><h1>Prepare a trade</h1><p class="muted">Stage 1: research, 1–5 days before you buy.</p></div></header>
+    return `<header class="page-head"><div><h1>Prepare a trade</h1><p class="muted">Stage 1: research, 1–5 days before you buy.${sym ? ` Everything about ${symLink(sym)} is on its stock page.` : ''}</p></div></header>
       <form class="card form inline" data-form="prepare-pick">
         ${field('Stock', `<input name="symbol" required autocapitalize="characters" value="${esc(sym)}">`)}
         ${field('Strategy', `<select name="strategyId">${options(strategies.map((s) => [s.id, s.name]), sid)}</select>`)}
@@ -365,9 +499,9 @@ const pages = {
     if (id) return playbookEditor(id);
     return `<header class="page-head"><h1>Playbooks</h1><a class="btn primary" href="#/playbooks/new">New playbook</a></header>
       <p class="lead">A playbook is a repeating job. At its time the desk queues a task; the assigned model app picks it up with <code>next_task</code>, follows your instructions and reports back. The desk never needs its own model key. There is no holiday calendar: switch playbooks off on market holidays.</p>
-      ${S.playbooks.length ? S.playbooks.map((pb) => `<section class="card"><div class="card-head"><h2>${esc(pb.name)} ${pb.enabled ? '<span class="tag tag-ok">On</span>' : '<span class="tag tag-muted">Off</span>'}</h2><a href="#/playbooks/${esc(pb.id)}">Edit</a></div>
-        <p class="muted">${esc(scheduleText(pb.schedule))} · run by ${esc(S.agents.find((a) => a.id === pb.agentId)?.name ?? 'nobody')} · up to ${pb.maxIntents} request(s) per run</p><p class="pre small">${esc(pb.instructions)}</p></section>`).join('') : '<p class="muted">No playbooks yet.</p>'}
-      <section class="card"><h2>Recent tasks</h2>${S.tasks.length ? `<ul class="rows">${S.tasks.map((t) => `<li><div><b>${esc(S.playbooks.find((p) => p.id === t.playbookId)?.name ?? t.playbookId)}</b> <span class="tag tag-muted">${esc(t.status)}</span><div class="small muted">Due ${when(t.dueAt)}</div>${t.summary ? `<p class="pre small">${esc(t.summary)}</p>` : ''}</div></li>`).join('')}</ul>` : '<p class="muted">No tasks yet.</p>'}</section>`;
+      ${S.playbooks.length ? S.playbooks.map((pb) => `<section class="card" data-fold="${esc(pb.id)}"><div class="card-head"><h2>${esc(pb.name)} ${pb.enabled ? '<span class="tag tag-ok">On</span>' : '<span class="tag tag-muted">Off</span>'}</h2><div class="row-tools"><a href="#/playbooks/${esc(pb.id)}">Edit</a>${trashBtn('playbook', pb.id, `playbook ${pb.name}`)}</div></div>
+        <p class="muted">${esc(scheduleText(pb.schedule))} · run by ${esc(S.agentNames[pb.agentId] ?? 'nobody')} · up to ${pb.maxIntents} request(s) per run</p><p class="pre small">${esc(pb.instructions)}</p></section>`).join('') : '<p class="muted">No playbooks yet.</p>'}
+      <section class="card"><h2>Recent tasks</h2>${S.tasks.length ? (({ items, nav }) => `<ul class="rows">${items.map((t) => `<li><div><b>${esc(S.playbooks.find((p) => p.id === t.playbookId)?.name ?? t.playbookId)}</b> <span class="tag tag-muted">${esc(t.status)}</span><div class="small muted">Due ${when(t.dueAt)}</div>${t.summary ? `<p class="pre small">${esc(t.summary)}</p>` : ''}</div>${['queued', 'claimed'].includes(t.status) ? '' : trashBtn('task', t.id, 'this job')}</li>`).join('')}</ul>${nav}`)(paged('tasks', S.tasks)) : '<p class="muted">No tasks yet.</p>'}</section>`;
   },
 
   agents() {
@@ -377,7 +511,7 @@ const pages = {
       <p class="lead">Connect any model app that speaks MCP. Each connection gets its own key, access level and limits. No level can approve, place orders, change access, edit strategies or delete history.</p>
       ${shown ? `<section class="card highlight"><h2>Key for ${esc(shown.name)} — shown once</h2><p>Add this to the model app’s MCP settings. Anyone with this key can act as this agent.</p><pre class="code">${esc(JSON.stringify({ mcpServers: { 'swing-desk': { ...S.meta.mcp, env: { ...(S.meta.mcp.env || {}), SWING_DESK_AGENT_KEY: shown.key } } } }, null, 2))}</pre><button class="btn" data-action="hide-key">I have saved it</button></section>` : ''}
       <section class="card"><h2>Connections</h2>${live.length ? `<ul class="agent-list">${live.map(agentRow).join('')}</ul>` : '<p class="muted">No connected agents. Add one below.</p>'}
-        ${gone.length ? `<details class="agent-gone"><summary>Disconnected agents (${gone.length})</summary><ul class="rows">${gone.map((a) => `<li><div><b>${esc(a.name)}</b> <span class="tag tag-bad">disconnected</span><div class="small muted">${esc(a.client)} · its past calls and requests stay in the ledger</div></div></li>`).join('')}</ul></details>` : ''}</section>
+        ${gone.length ? (({ items, nav }) => `<details class="agent-gone"><summary>Disconnected agents (${gone.length})</summary><ul class="rows">${items.map((a) => `<li><div><b>${esc(a.name)}</b> <span class="tag tag-bad">disconnected</span><div class="small muted">${esc(a.client)} · its past calls and requests stay in the ledger</div></div>${trashBtn('agent', a.id, `agent ${a.name}`)}</li>`).join('')}</ul>${nav}</details>`)(paged('agents-gone', gone)) : ''}</section>
       <form class="card form" data-form="agent-add"><h2>Add an agent</h2>
         ${field('Start from', `<select name="agentPreset">${options([...Object.entries(S.meta.presets.agents).map(([k, p]) => [k, `${p.label} – ${p.about}`]), ['custom', 'Custom – choose everything yourself']], 'researcher')}</select>`)}
         <div class="grid">${field('Name', '<input name="name" required placeholder="Claude research">')}${field('App', '<input name="client" placeholder="Claude Code">')}
@@ -385,13 +519,21 @@ const pages = {
         ${field('Requests per day', num('intentsPerDay', S.meta.presets.agents.researcher.limits.intentsPerDay, 'step="1" min="0"'))}${field('Writes per day', num('writesPerDay', S.meta.presets.agents.researcher.limits.writesPerDay, 'step="1" min="0"'))}${field('Calls per hour', num('callsPerHour', S.meta.presets.agents.researcher.limits.callsPerHour, 'step="1" min="0"'))}</div>
         <ul class="small muted">${Object.entries(SCOPE_HELP).map(([k, v]) => `<li><b>${k}</b>: ${v}</li>`).join('')}</ul>
         ${pinField()}<button class="btn primary">Create agent and key</button></form>
-      <section class="card"><h2>Recent MCP calls</h2>${S.calls.length ? `<ul class="rows">${S.calls.map((c) => `<li><span>${esc(S.agents.find((a) => a.id === c.agent_id)?.name ?? c.agent_id)} · <code>${esc(c.tool)}</code> ${c.ok ? '' : `<span class="tag tag-bad">${esc(c.error)}</span>`}</span><span class="small muted">${when(c.at)}</span></li>`).join('')}</ul>` : '<p class="muted">No calls yet.</p>'}</section>`;
+      <section class="card"><h2>Recent MCP calls</h2>${S.calls.length ? (({ items, nav }) => `<ul class="rows">${items.map((c) => `<li><span>${esc(S.agentNames[c.agent_id] ?? c.agent_id)} · <code>${esc(c.tool)}</code> ${c.ok ? '' : `<span class="tag tag-bad">${esc(c.error)}</span>`}</span><span class="small muted">${when(c.at)}</span></li>`).join('')}</ul>${nav}`)(paged('calls', S.calls)) : '<p class="muted">No calls yet.</p>'}</section>`;
   },
 
   ledger() {
     return `<header class="page-head"><h1>Ledger</h1></header>
       <p class="lead">Every change is a new entry. Nothing is edited or deleted. Each entry includes a fingerprint of the one before it, so tampering shows up.</p>
-      <section class="card"><div id="chain" class="muted">Checking…</div><ul class="rows" id="ledger-rows"><li class="muted">Loading…</li></ul></section>`;
+      <section class="card"><div id="chain" class="muted">Checking…</div><ul class="rows" id="ledger-rows"><li class="muted">Loading…</li></ul><div id="ledger-pager"></div></section>`;
+  },
+
+  trash() {
+    const p = paged('trash', S.trash, 15);
+    return `<header class="page-head"><h1>Trash</h1></header>
+      <p class="lead">Things you moved here are hidden from every page and from agents. Closed lots still count in your profit and loss. <b>Restore</b> puts an item back. <b>Delete forever</b> means it can never come back. The ledger keeps a line saying something was deleted, so your history still checks out.</p>
+      <section class="card"><h2>In the Trash <span class="small muted">${S.trash.length}</span></h2>${S.trash.length ? `<ul class="rows">${p.items.map(trashRow).join('')}</ul>${p.nav}` : '<p class="muted">The Trash is empty.</p>'}</section>
+      ${S.trash.length ? `<form class="card form" data-form="trash-empty"><h2>Empty the Trash</h2><p>Deletes all ${S.trash.length} item(s) forever. This cannot be undone.</p>${pinField()}<button class="btn danger">Delete all forever</button></form>` : ''}`;
   },
 
   settings() {
@@ -429,7 +571,8 @@ function requestRow(i) {
   const label = i.kind === 'buy' ? `Buy ${i.symbol}` : i.kind === 'exit' ? `Sell ${i.qty} ${i.symbol}` : `Settings: ${Object.keys(i.patch).join(', ')}`;
   const blockers = i.evaluation ? i.evaluation.checks.filter((c) => c.required && c.status !== 'pass') : [];
   const detail = i.status === 'pending' ? (blockers.length ? `${blockers.length} item(s) need attention` : 'All checks pass') : i.status === 'approved' ? 'Approved · record the fill after you place it in Kite' : '';
-  return `<li><div><a href="#/request/${esc(i.id)}"><b>${esc(label)}</b></a> <span class="tag tag-muted">${esc(i.status)}</span><div class="small muted">${byLine(i.by)} · ${when(i.at)}${detail ? ` · ${detail}` : ''}</div></div><a class="btn" href="#/request/${esc(i.id)}">Open</a></li>`;
+  const verb = i.kind === 'buy' ? 'Buy' : i.kind === 'exit' ? `Sell ${i.qty}` : label;
+  return `<li><div><b><a href="#/request/${esc(i.id)}">${esc(verb)}</a> ${symLink(i.symbol)}</b> <span class="tag tag-muted">${esc(i.status)}</span><div class="small muted">${byLine(i.by)} · ${when(i.at)}${detail ? ` · ${detail}` : ''}</div></div><div class="row-tools"><a class="btn" href="#/request/${esc(i.id)}">Open</a>${FINISHED.has(i.status) ? trashBtn('request', i.id, `request ${label}`) : ''}</div></li>`;
 }
 
 function pendingRequest(i) {
@@ -479,12 +622,12 @@ function evidenceFor(i) {
   if (!i.evidenceIds?.length && !i.claims) return '';
   const items = (i.evidenceIds || []).map((id) => S.evidence.find((e) => e.id === id)).filter(Boolean);
   const claims = Object.entries(i.claims || {});
-  return `${items.length ? `<h3>Evidence it points to</h3><ul class="rows">${items.map(evidenceRow).join('')}</ul>` : ''}${claims.length ? `<h3>Agent’s checklist claims</h3><ul class="rows">${claims.map(([k, v]) => `<li><span><b>${esc(k)}</b>: ${esc(v)}</span></li>`).join('')}</ul>` : ''}`;
+  return `${items.length ? `<h3>Evidence it points to</h3><ul class="rows">${items.map((e) => evidenceRow(e)).join('')}</ul>` : ''}${claims.length ? `<h3>Agent’s checklist claims</h3><ul class="rows">${claims.map(([k, v]) => `<li><span><b>${esc(k)}</b>: ${esc(v)}</span></li>`).join('')}</ul>` : ''}`;
 }
 
-function evidenceRow(e) {
+function evidenceRow(e, withTrash = false) {
   const value = e.kind === 'quote' ? price(e.price) : e.kind === 'funding' ? `up to ${funding(e.marginPct)}` : esc(e.summary);
-  return `<li><div><b>${esc(e.symbol)}</b> <span class="tag tag-muted">${esc(e.kind)}</span> ${value}<div class="small muted">${byLine(e.by)} · observed ${when(e.observedAt)}${e.confirms ? ' · confirmed against Kite' : ''}</div>${sourcesList(e.sources)}</div>${confirmButton(e)}</li>`;
+  return `<li><div><b>${symLink(e.symbol)}</b> <span class="tag tag-muted">${esc(e.kind)}</span> ${value}<div class="small muted">${byLine(e.by)} · observed ${when(e.observedAt)}${e.confirms ? ' · confirmed against Kite' : ''}</div>${sourcesList(e.sources)}</div><div class="row-tools">${confirmButton(e)}${withTrash ? trashBtn('evidence', e.id, `${e.kind} evidence for ${e.symbol}`) : ''}</div></li>`;
 }
 
 /** Agent-found prices and MTF requirements count only after the owner checks them in Kite. */
@@ -552,13 +695,39 @@ function agentRow(a) {
 
 function lotsTable(lots, closed = false) {
   if (!lots.length) return '<p class="muted">None.</p>';
-  return `<div class="table-wrap"><table><thead><tr><th>Stock</th><th>Type</th><th class="num">Shares</th><th class="num">Buy price</th><th class="num">${closed ? 'Result' : 'Stop'}</th><th class="num">${closed ? 'Charges' : 'Risk left'}</th><th>Bought</th></tr></thead><tbody>
-    ${lots.map((l) => `<tr><td><b>${esc(l.symbol)}</b> <span class="small muted">${esc(l.exchange)}</span></td><td>${l.buyType === 'mtf' ? `MTF ${lev(l.marginPct)}` : 'Regular'}</td><td class="num mono">${closed ? l.qty : `${l.remaining}${l.remaining !== l.qty ? ` of ${l.qty}` : ''}`}</td><td class="num mono">${price(l.entry)}</td><td class="num mono">${closed ? money(l.realised) : price(l.stop)}</td><td class="num mono">${closed ? money(l.sales.reduce((a, s) => a + s.charges, 0)) : money(l.risk)}</td><td>${esc(l.date)}</td></tr>`).join('')}
+  return `<div class="table-wrap"><table><thead><tr><th>Stock</th><th>Type</th><th class="num">Shares</th><th class="num">Buy price</th><th class="num">${closed ? 'Result' : 'Stop'}</th><th class="num">${closed ? 'Charges' : 'Risk left'}</th><th>Bought</th>${closed ? '<th><span class="visually-hidden">Trash</span></th>' : ''}</tr></thead><tbody>
+    ${lots.map((l) => `<tr><td><b>${symLink(l.symbol)}</b> <span class="small muted">${esc(l.exchange)}</span></td><td>${l.buyType === 'mtf' ? `MTF ${lev(l.marginPct)}` : 'Regular'}</td><td class="num mono">${closed ? l.qty : `${l.remaining}${l.remaining !== l.qty ? ` of ${l.qty}` : ''}`}</td><td class="num mono">${price(l.entry)}</td><td class="num mono">${closed ? money(l.realised) : price(l.stop)}</td><td class="num mono">${closed ? money(l.sales.reduce((a, s) => a + s.charges, 0)) : money(l.risk)}</td><td>${esc(l.date)}</td>${closed ? `<td>${trashBtn('lot', l.id, `closed lot ${l.symbol}`)}</td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
 }
 
+function noteHtml(n) {
+  return `<article class="note"><div class="card-head"><h3>${n.symbol ? `${symLink(n.symbol)} · ` : ''}${esc(n.title)}</h3>${trashBtn('note', n.id, `note “${n.title}”`)}</div><p class="small muted">${byLine(n.by)} · ${when(n.at)}</p><p class="pre">${esc(n.body)}</p>${sourcesList(n.sources)}</article>`;
+}
+
+/** Every symbol that has requests, lots, evidence or notes, most recently active first. */
+function stockIndex() {
+  const map = new Map();
+  const touch = (symbol, at, add) => {
+    if (!symbol) return;
+    const s = map.get(symbol) ?? { symbol, last: '', openLots: 0, waiting: 0, quote: null };
+    if (at > s.last) s.last = at;
+    add?.(s);
+    map.set(symbol, s);
+  };
+  for (const i of S.intents) touch(i.symbol, i.at, (s) => { if (i.status === 'pending' || i.status === 'approved') s.waiting++; });
+  for (const l of S.lots) touch(l.symbol, l.date, (s) => { if (l.status === 'open') s.openLots++; });
+  for (const e of S.evidence) touch(e.symbol, e.observedAt, (s) => { if (e.kind === 'quote' && !s.quote) s.quote = e; }); // newest first
+  for (const n of S.notes) touch(n.symbol, n.at);
+  return [...map.values()].sort((a, b) => b.last.localeCompare(a.last));
+}
+
+function stockRow(s) {
+  return `<li><div><b>${symLink(s.symbol)}</b>${s.openLots ? ` <span class="tag tag-ok">${s.openLots} open lot${s.openLots > 1 ? 's' : ''}</span>` : ''}${s.waiting ? ` <span class="tag tag-ask">${s.waiting} request${s.waiting > 1 ? 's' : ''} for you</span>` : ''}
+    <div class="small muted">${s.quote ? `Last price ${price(s.quote.price)} · ` : ''}Last activity ${when(s.last)}</div></div><a class="btn" href="#/stock/${esc(encodeURIComponent(s.symbol))}">Open</a></li>`;
+}
+
 function lotCard(l) {
-  return `<article class="lot"><div class="card-head"><h3>${esc(l.symbol)} · ${l.remaining} shares at ${price(l.entry)}</h3><span class="muted small">${l.buyType === 'mtf' ? `MTF ${lev(l.marginPct)}` : 'Regular'} · bought ${esc(l.date)}</span></div>
+  return `<article class="lot"><div class="card-head"><h3>${symLink(l.symbol)} · ${l.remaining} shares at ${price(l.entry)}</h3><span class="muted small">${l.buyType === 'mtf' ? `MTF ${lev(l.marginPct)}` : 'Regular'} · bought ${esc(l.date)}</span></div>
     <p class="small">Stop ${price(l.stop)} · target ${price(l.target)} · loss if stop hit ≈ ${money(l.risk)}${l.realised ? ` · realised so far ${money(l.realised)}` : ''}</p>
     <div class="actions"><details><summary class="btn">Record a sale</summary>${saleForm(l)}</details>
     <details><summary class="btn">Move stop</summary><form class="form inline" data-form="stop" data-id="${esc(l.id)}">${field('New stop ₹', num('stop', l.stop, 'required'))}<button class="btn">Save</button></form></details></div></article>`;
@@ -665,11 +834,17 @@ async function loadPrepare(strategyId, symbol, key) {
 
 async function loadLedger() {
   try {
-    ledgerCache ??= await api('/api/ledger');
+    if (!ledgerCache) {
+      ledgerCache = await api('/api/ledger');
+      ledgerCache.more = ledgerCache.events.length === 100;
+    }
   } catch (err) {
     return toast(err.message, true);
   }
-  const rows = ledgerCache.events.map((e) => `<li><div><b>${esc(describe(e))}</b><div class="small muted">#${e.seq} · ${esc(actorName(e.actor))} · ${when(e.at)}</div></div></li>`).join('');
+  const p = paged('ledger', ledgerCache.events, 25);
+  const pager = $('#ledger-pager');
+  if (pager) pager.innerHTML = p.nav + (ledgerCache.more && p.items.at(-1) === ledgerCache.events.at(-1) ? '<button type="button" class="btn" data-action="ledger-more">Load older entries</button>' : '');
+  const rows = p.items.map((e) => `<li><div><b>${esc(describe(e))}</b><div class="small muted">#${e.seq} · ${esc(actorName(e.actor))} · ${when(e.at)}</div></div></li>`).join('');
   const activity = $('#activity');
   if (activity) activity.innerHTML = ledgerCache.events.filter((e) => !e.type.startsWith('task.')).slice(0, 8).map((e) => `<li><div>${esc(describe(e))}<div class="small muted">${esc(actorName(e.actor))} · ${when(e.at)}</div></div></li>`).join('') || '<li class="muted">Nothing yet.</li>';
   const list = $('#ledger-rows');
@@ -679,7 +854,10 @@ async function loadLedger() {
 }
 
 function describe(e) {
+  if (e.purged) return 'Something deleted forever (contents hidden)';
   const d = e.data;
+  const kind = (KIND_LABEL[d.kind] ?? 'item').toLowerCase();
+  const an = /^[aeiou]/.test(kind) ? 'an' : 'a';
   const map = {
     'settings.changed': () => `Changed limits: ${Object.keys(d.patch).join(', ')}`,
     'automation.paused': () => 'Paused all agents',
@@ -705,6 +883,9 @@ function describe(e) {
     'task.expired': () => 'Task expired',
     'pin.changed': () => 'Approval PIN changed',
     'research.answered': () => `Research checklist answers for ${d.symbol}`,
+    'item.trashed': () => `Moved ${an} ${kind} to the Trash`,
+    'item.restored': () => `Restored ${an} ${kind} from the Trash`,
+    'item.purged': () => `Deleted ${an} ${kind} forever`,
   };
   return (map[e.type] ?? (() => e.type))();
 }
@@ -735,7 +916,7 @@ const forms = {
     toast('MTF requirement saved for today.');
   },
   async evidence(form, data) {
-    await act('evidence.add', { kind: data.kind, symbol: data.symbol, summary: data.summary, sources: data.source ? [data.source] : [] });
+    await act('evidence.add', { kind: data.kind, symbol: form.dataset.symbol || data.symbol, summary: data.summary, sources: data.source ? [data.source] : [] });
     toast('Evidence saved.');
   },
   async approve(form, data) {
@@ -802,6 +983,13 @@ const forms = {
     await act('settings.change', { patch, pin });
     toast('Limits saved.');
   },
+  async note(form, data) {
+    await act('note.add', { symbol: form.dataset.symbol, title: data.title, body: data.body });
+    toast('Note saved.');
+  },
+  async 'stock-pick'(form, data) {
+    location.hash = `#/stock/${encodeURIComponent(data.symbol.trim().toUpperCase())}`;
+  },
   async 'prepare-pick'(form, data) {
     location.hash = `#/prepare/${encodeURIComponent(data.strategyId)}/${encodeURIComponent(data.symbol.trim().toUpperCase())}`;
   },
@@ -819,6 +1007,14 @@ const forms = {
   async pin(form, data) {
     await act('pin.set', { pin: data.pin, oldPin: data.oldPin });
     toast('PIN saved.');
+  },
+  async 'trash-purge'(form, data) {
+    await act('trash.purge', { kind: form.dataset.kind, id: form.dataset.id, pin: data.pin });
+    toast('Deleted forever.');
+  },
+  async 'trash-empty'(form, data) {
+    const r = await act('trash.purge', { all: true, pin: data.pin });
+    toast(`Deleted ${r.count} item(s) forever.`);
   },
 };
 
@@ -853,6 +1049,21 @@ document.addEventListener('click', async (e) => {
       return;
     }
     if (action === 'confirm-evidence') { await act('evidence.add', { confirms: el.dataset.id }); toast('Confirmed. It counts from now.'); }
+    if (action === 'trash') {
+      await act('trash.move', { kind: el.dataset.kind, id: el.dataset.id });
+      toast('Moved to the Trash. You can restore it from the Trash page.');
+      const parent = { request: '#/requests', strategy: '#/strategies', playbook: '#/playbooks' }[el.dataset.kind];
+      if (parent && location.hash.includes(el.dataset.id)) location.hash = parent;
+      main.focus();
+    }
+    if (action === 'restore') { await act('trash.restore', { kind: el.dataset.kind, id: el.dataset.id }); toast('Restored.'); }
+    if (action === 'page') pageAt[el.dataset.key] = Number(el.dataset.to);
+    if (action === 'ledger-more') {
+      const older = await api(`/api/ledger?before=${ledgerCache.events.at(-1).seq}`);
+      ledgerCache.events.push(...older.events);
+      ledgerCache.more = older.events.length === 100;
+      pageAt.ledger = Math.ceil((ledgerCache.events.length - older.events.length) / 25) + 1;
+    }
     if (['add-item', 'remove-item', 'refresh-items'].includes(action)) {
       const form = el.closest('form');
       const s = readStrategy(form);
@@ -861,6 +1072,10 @@ document.addEventListener('click', async (e) => {
       drafts.strategy = { key: form.dataset.key, value: s };
     }
     render();
+    if (action === 'page' || action === 'ledger-more') {
+      const nav = main.querySelector(`.pager[data-key="${CSS.escape(el.dataset.key ?? 'ledger')}"]`);
+      (nav?.querySelector(`button:not(:disabled)`) ?? main).focus();
+    }
   } catch (err) {
     toast(err.message, true);
   }
@@ -975,7 +1190,7 @@ function syncFunding(form) {
 // ---------- update check ----------
 
 /** Must match API_VERSION in src/version.js. Bump both when the page needs new server data. */
-const CLIENT_API = 2;
+const CLIENT_API = 3;
 const serverIsOld = () => (S?.meta?.api ?? 1) < CLIENT_API;
 
 /** The server keeps its code in memory; after an update it must be restarted. */
@@ -1004,14 +1219,18 @@ function render() {
   }
   main.innerHTML = restartBanner() + html;
   addInfoButtons(main);
+  addFolds(main, route, !args.length && FOLDED_AT_FIRST.has(route));
   document.querySelectorAll('form').forEach(syncFunding);
   // Fill the activity/ledger lists only after the page markup exists.
   if (page === pages.today || page === pages.ledger) loadLedger();
-  for (const a of document.querySelectorAll('.side a')) a.toggleAttribute('aria-current', a.dataset.route === route || (route === 'request' && a.dataset.route === 'requests'));
+  for (const a of document.querySelectorAll('.side a')) a.toggleAttribute('aria-current', a.dataset.route === route || (route === 'request' && a.dataset.route === 'requests') || (route === 'stock' && a.dataset.route === 'stocks'));
   const pending = S.intents.filter((i) => i.status === 'pending').length;
   const count = $('#pending-count');
   count.hidden = !pending;
   count.textContent = pending;
+  const trashCount = $('#trash-count');
+  trashCount.hidden = !S.trash.length;
+  trashCount.textContent = S.trash.length;
   $('#automation').innerHTML = S.status.automationPaused
     ? '<p class="small">Agents are <b>paused</b></p><a class="btn" href="#/settings">Resume agents…</a>'
     : `<p class="small">Agents: ${S.agents.filter((a) => !a.revoked && a.scope !== 'off').length} active</p><button class="btn danger" data-action="pause">Pause all agents</button>`;

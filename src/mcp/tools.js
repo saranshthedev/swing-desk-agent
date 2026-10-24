@@ -55,7 +55,7 @@ export const TOOLS = {
     level: 'read',
     description: 'Strategies and their checklists. Every buy request must name one. Items have a group and a stage (research = days before; before = on the day). Attest items are answered by the owner (research ones can be answered days ahead); you may add a claim for each. Evidence items need evidence of the given kind and age; scope "market" means evidence saved once under the symbol MARKET. Rule items are checked by the desk.',
     inputSchema: obj(),
-    run: (store) => store.read((s) => Object.values(s.strategies).filter((x) => x.enabled)),
+    run: (store) => store.read((s) => Object.values(s.strategies).filter((x) => x.enabled && !x.trashed)),
   },
 
   get_checklist_library: {
@@ -80,7 +80,7 @@ export const TOOLS = {
     level: 'read',
     description: 'Open lots (or all lots) with actual buy price, stop, target, remaining shares, risk at stop and realised P/L.',
     inputSchema: obj({ includeClosed: { type: 'boolean' } }),
-    run: (store, _a, args) => store.read((s) => Object.values(s.lots).filter((l) => args.includeClosed || l.status === 'open').map(lotView)),
+    run: (store, _a, args) => store.read((s) => Object.values(s.lots).filter((l) => !l.trashed && (args.includeClosed || l.status === 'open')).map(lotView)),
   },
 
   list_requests: {
@@ -88,7 +88,7 @@ export const TOOLS = {
     description: `Buy, exit and settings requests with their status. ${UNTRUSTED}`,
     inputSchema: obj({ status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'withdrawn', 'expired', 'filled'] }, limit: int('Max items, default 30') }),
     run: (store, _a, args) => store.read((s, now) => Object.values(s.intents)
-      .filter((i) => !args.status || intentStatus(i, now) === args.status)
+      .filter((i) => !i.trashed && (!args.status || intentStatus(i, now) === args.status))
       .sort((a, b) => b.at.localeCompare(a.at)).slice(0, Math.min(100, args.limit ?? 30))
       .map((i) => ({ id: i.id, kind: i.kind, symbol: i.symbol, status: intentStatus(i, now), by: i.by, at: i.at, expiresAt: i.expiresAt }))),
   },
@@ -98,7 +98,7 @@ export const TOOLS = {
     description: `One request with the desk’s live rule checks (pending) or the frozen decision (approved/rejected). ${UNTRUSTED}`,
     inputSchema: obj({ id: str('Request id', 40) }, ['id']),
     run: (store, _a, { id }) => store.read((s, now) => {
-      if (!s.intents[id]) throw new UserError('That request does not exist.');
+      if (!s.intents[id] || s.intents[id].trashed) throw new UserError('That request does not exist.');
       return intentView(s, s.intents[id], now);
     }),
   },
@@ -114,14 +114,14 @@ export const TOOLS = {
     level: 'read',
     description: `Recent evidence. Items with by = "owner" were entered or confirmed by the owner; others are agent-found and not verified. ${UNTRUSTED}`,
     inputSchema: obj({ symbol, limit: int('Max items, default 30') }),
-    run: (store, _a, args) => store.read((s) => recentFirst(s.evidence, Math.min(200, args.limit ?? 30), (e) => !args.symbol || e.symbol === String(args.symbol).toUpperCase())),
+    run: (store, _a, args) => store.read((s) => recentFirst(s.evidence, Math.min(200, args.limit ?? 30), (e) => !e.trashed && (!args.symbol || e.symbol === String(args.symbol).toUpperCase()))),
   },
 
   list_notes: {
     level: 'read',
     description: `Recent research notes. ${UNTRUSTED}`,
     inputSchema: obj({ symbol, limit: int('Max items, default 20') }),
-    run: (store, _a, args) => store.read((s) => recentFirst(s.notes, Math.min(100, args.limit ?? 20), (n) => !args.symbol || n.symbol === String(args.symbol).toUpperCase())),
+    run: (store, _a, args) => store.read((s) => recentFirst(s.notes, Math.min(100, args.limit ?? 20), (n) => !n.trashed && (!args.symbol || n.symbol === String(args.symbol).toUpperCase()))),
   },
 
   next_task: {

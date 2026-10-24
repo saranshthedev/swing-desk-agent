@@ -46,7 +46,7 @@ export function latestSlot(schedule, now) {
 export function scheduleTick(state, now, newId) {
   const events = [];
   for (const pb of Object.values(state.playbooks)) {
-    if (!pb.enabled || !pb.agentId || state.agents[pb.agentId]?.revoked) continue;
+    if (!pb.enabled || pb.trashed || !pb.agentId || state.agents[pb.agentId]?.revoked) continue;
     const due = latestSlot(pb.schedule, now);
     if (due === null || now - due > GRACE_MS) continue;
     const slot = `${pb.id}@${new Date(due).toISOString()}`;

@@ -9,6 +9,8 @@ import { validateSchedule } from './schedule.js';
 import { daysBetween, indiaDate, isDate } from './time.js';
 import { EVIDENCE_KINDS, NEEDS_OWNER_CONFIRMATION } from './evidence.js';
 import { validateStrategy } from './strategies.js';
+import { TRASH_KINDS, findItem } from './state.js';
+import { intentStatus } from './views.js';
 
 export { EVIDENCE_KINDS };
 export const SCOPES = ['off', 'read', 'draft', 'propose'];
@@ -149,7 +151,7 @@ export function addEvidence(state, input, { actor, newId, now }) {
 function confirmEvidence(state, { confirms }, { actor, newId, now }) {
   if (actor !== 'owner') throw new UserError('Only the owner can confirm a price or MTF requirement.');
   const source = state.evidence.find((e) => e.id === confirms);
-  if (!source || !NEEDS_OWNER_CONFIRMATION.has(source.kind) || source.by === 'owner') {
+  if (!source || source.trashed || !NEEDS_OWNER_CONFIRMATION.has(source.kind) || source.by === 'owner') {
     throw new UserError('Only an agent’s price or MTF requirement can be confirmed.');
   }
   const data = {
@@ -209,12 +211,12 @@ export function submitIntent(state, input, { actor, newId, now }) {
     const problem = planProblem(plan);
     if (problem) throw new UserError(problem);
     const evidenceIds = input.evidenceIds ?? [];
-    if (!Array.isArray(evidenceIds) || evidenceIds.length > 20 || evidenceIds.some((id) => !state.evidence.some((e) => e.id === id))) {
+    if (!Array.isArray(evidenceIds) || evidenceIds.length > 20 || evidenceIds.some((id) => !state.evidence.some((e) => e.id === id && !e.trashed))) {
       throw new UserError('evidenceIds must list up to 20 existing evidence ids.');
     }
     const strategy = state.strategies[input.strategyId];
-    if (!strategy || !strategy.enabled) {
-      throw new UserError(`Choose a strategy: ${Object.values(state.strategies).filter((s) => s.enabled).map((s) => s.id).join(', ')}.`);
+    if (!strategy || !strategy.enabled || strategy.trashed) {
+      throw new UserError(`Choose a strategy: ${Object.values(state.strategies).filter((s) => s.enabled && !s.trashed).map((s) => s.id).join(', ')}.`);
     }
     const claims = {};
     for (const [itemId, claim] of Object.entries(input.claims ?? {})) {
@@ -245,6 +247,7 @@ export function submitIntent(state, input, { actor, newId, now }) {
 export function approveIntent(state, { id, answers = {} }, { now }) {
   const intent = intentOf(state, id);
   if (intent.status !== 'pending') throw new UserError(`This request is already ${intent.status}.`);
+  if (intent.trashed) throw new UserError('This request is in the Trash. Restore it first.');
   const ev = evaluate(state, intent, now, answers);
   if (!ev.ready) {
     const blocking = ev.checks.filter((c) => c.required && c.status !== 'pass').map((c) => c.label);
@@ -358,6 +361,7 @@ export function saveResearch(state, { symbol, strategyId, answers }) {
 
 export function saveStrategy(state, input) {
   const clean = validateStrategy(input);
+  if (state.strategies[clean.id]?.trashed) throw new UserError('A strategy with this id is in the Trash. Restore it there, or use another id.');
   const version = (state.strategies[clean.id]?.version ?? 0) + 1;
   return { events: [{ type: 'strategy.saved', data: { ...clean, version } }], result: { id: clean.id, version } };
 }
@@ -365,8 +369,9 @@ export function saveStrategy(state, input) {
 // ---------- playbooks & tasks ----------
 
 export function savePlaybook(state, input, { newId }) {
-  if (input.agentId && !state.agents[input.agentId]) throw new UserError('Choose an existing agent.');
+  if (input.agentId && (!state.agents[input.agentId] || state.agents[input.agentId].trashed)) throw new UserError('Choose an existing agent.');
   if (input.id !== undefined && !state.playbooks[input.id]) throw new UserError('That playbook does not exist.');
+  if (input.id !== undefined && state.playbooks[input.id].trashed) throw new UserError('That playbook is in the Trash. Restore it first.');
   const maxIntents = input.maxIntents ?? 0;
   if (!Number.isInteger(maxIntents) || maxIntents < 0 || maxIntents > 20) throw new UserError('Requests per run must be 0 to 20.');
   const data = {
@@ -384,7 +389,7 @@ export function savePlaybook(state, input, { newId }) {
 export function claimTask(state, _input, { actor }) {
   const agentId = actor.replace(/^agent:/, '');
   const task = Object.values(state.tasks)
-    .filter((t) => t.agentId === agentId && t.status === 'queued')
+    .filter((t) => t.agentId === agentId && t.status === 'queued' && !state.playbooks[t.playbookId]?.trashed)
     .sort((a, b) => a.dueAt.localeCompare(b.dueAt))[0];
   if (!task) return { events: [], result: null };
   return { events: [{ type: 'task.claimed', data: { id: task.id } }], result: task.id };
@@ -395,4 +400,67 @@ export function finishTask(state, { taskId, summary, failed }, { actor }) {
   if (!task || `agent:${task.agentId}` !== actor || task.status !== 'claimed') throw new UserError('That task is not claimed by you.');
   const body = text(summary, failed ? 'Reason' : 'Summary', 4_000);
   return { events: [failed ? { type: 'task.failed', data: { id: taskId, reason: body } } : { type: 'task.completed', data: { id: taskId, summary: body } }] };
+}
+
+// ---------- trash (owner only; hides items, never removes events) ----------
+
+const busyTask = (t) => t.status === 'queued' || t.status === 'claimed';
+
+/** Why an item may not go to the Trash yet, in plain words; null when it may. */
+function trashBlocker(state, kind, item, now) {
+  if (kind === 'request') {
+    if (item.status === 'approved') return 'This request is approved. Record the fill from Kite first.';
+    if (intentStatus(item, now) === 'pending') return 'This request is still waiting. Reject it first.';
+  }
+  if (kind === 'lot') {
+    if (item.status === 'open') return 'This lot is still open. Record the sale of all its shares first.';
+    if (state.intents[item.intentId]?.status === 'approved') return 'Its buy request still expects more shares. Wait until it is filled.';
+  }
+  if (kind === 'strategy' && Object.values(state.intents).some((i) => i.strategyId === item.id && intentStatus(i, now) === 'pending')) {
+    return 'Requests are waiting on this strategy. Reject them first.';
+  }
+  if (kind === 'playbook' && Object.values(state.tasks).some((t) => t.playbookId === item.id && busyTask(t))) {
+    return 'This playbook has a job queued or running. Wait until it finishes.';
+  }
+  if (kind === 'agent' && !item.revoked) return 'This agent is still connected. Disconnect it first.';
+  if (kind === 'task' && busyTask(item)) return 'This job is queued or running. Wait until it finishes.';
+  return null;
+}
+
+function trashTarget(state, { kind, id }) {
+  if (!TRASH_KINDS.includes(kind)) throw new UserError('That kind of item cannot go to the Trash.');
+  const item = findItem(state, kind, id);
+  if (!item || item.purged) throw new UserError(`That ${kind} does not exist.`);
+  return item;
+}
+
+export function moveToTrash(state, input, { now }) {
+  const item = trashTarget(state, input);
+  if (item.trashed) throw new UserError('It is already in the Trash.');
+  const blocker = trashBlocker(state, input.kind, item, now);
+  if (blocker) throw new UserError(blocker);
+  return { events: [{ type: 'item.trashed', data: { kind: input.kind, id: input.id } }] };
+}
+
+export function restoreFromTrash(state, input) {
+  const item = trashTarget(state, input);
+  if (!item.trashed) throw new UserError('It is not in the Trash.');
+  return { events: [{ type: 'item.restored', data: { kind: input.kind, id: input.id } }] };
+}
+
+/** Hide for good (`all: true` empties the Trash). The record stays in the ledger so its chain still checks out. */
+export function purgeFromTrash(state, input) {
+  if (input.all === true) {
+    const events = TRASH_KINDS.flatMap((kind) => trashedItems(state, kind).map((item) => ({ type: 'item.purged', data: { kind, id: item.id } })));
+    if (!events.length) throw new UserError('The Trash is already empty.');
+    return { events, result: { count: events.length } };
+  }
+  const item = trashTarget(state, input);
+  if (!item.trashed) throw new UserError('Move it to the Trash first.');
+  return { events: [{ type: 'item.purged', data: { kind: input.kind, id: input.id } }], result: { count: 1 } };
+}
+
+export function trashedItems(state, kind) {
+  const all = { evidence: state.evidence, note: state.notes, request: Object.values(state.intents), lot: Object.values(state.lots), strategy: Object.values(state.strategies), playbook: Object.values(state.playbooks), agent: Object.values(state.agents), task: Object.values(state.tasks) }[kind];
+  return all.filter((x) => x.trashed && !x.purged);
 }

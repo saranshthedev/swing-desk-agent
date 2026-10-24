@@ -98,6 +98,8 @@ export const INFO_IN = {
     summary: 'What you found, in a few words. Example: “No news today. Results on 20 Nov.”',
     symbol: 'The stock’s name as in Kite. For whole-market checks (Nifty, VIX, oil, USDINR, US markets) type MARKET.',
   },
+  'stock-pick': { symbol: 'The stock’s name as in Kite, for example TATAMOTORS. Type MARKET for whole-market checks.' },
+  note: { title: 'A short heading, for example “Watch the 580 level”.', body: 'Anything you want to remember about this stock. Connected agents with Read access can see notes.' },
   'prepare-pick': { symbol: 'The stock you are thinking of buying in the next few days.', strategyId: 'Which strategy’s checklist to use. Each one has its own research list.' },
   stop: { stop: 'Your new stop price. Moving it up locks in profit; moving it down adds risk.' },
   reject: { reason: 'Optional. Why you said no, so you and the AI can learn.' },

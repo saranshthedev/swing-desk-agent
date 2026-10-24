@@ -8,7 +8,8 @@ import { join, extname, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import * as C from '../core/commands.js';
-import { deskStatus, intentView, lotView, recentFirst, previewPlan } from '../core/views.js';
+import { deskStatus, intentView, lotView, recentFirst, previewPlan, trashView, purgedIds } from '../core/views.js';
+import { live } from '../core/state.js';
 import { scheduleTick } from '../core/schedule.js';
 import { SETTING_RULES, UserError } from '../core/settings.js';
 import { EVIDENCE_KINDS } from '../core/evidence.js';
@@ -58,6 +59,9 @@ const ACTIONS = {
   'fill.buy': [false, owner(C.recordBuyFill)],
   'fill.sell': [false, owner(C.recordSale)],
   'lot.stop': [false, owner(C.changeStop)],
+  'trash.move': [false, owner(C.moveToTrash)],
+  'trash.restore': [false, owner(C.restoreFromTrash)],
+  'trash.purge': [true, owner(C.purgeFromTrash)],
   'plan.preview': [false, (store, body) => store.read((s) => previewPlan(s, body))],
   'pin.set': [false, (store, body) => { store.setPin(body.pin, body.oldPin); return { ok: true }; }],
   backup: [false, (store) => {
@@ -72,14 +76,17 @@ export function stateView(store) {
     now,
     status: deskStatus(s, now),
     pinSet: store.hasPin(),
-    strategies: Object.values(s.strategies),
-    agents: Object.values(s.agents).map((a) => ({ ...a, usage: s.usage[`agent:${a.id}`] ?? {} })),
-    intents: Object.values(s.intents).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200).map((i) => intentView(s, i, now)),
-    lots: Object.values(s.lots).map(lotView).sort((a, b) => b.date.localeCompare(a.date)),
-    evidence: recentFirst(s.evidence, 200),
-    notes: recentFirst(s.notes, 100),
-    playbooks: Object.values(s.playbooks),
-    tasks: Object.values(s.tasks).sort((a, b) => b.dueAt.localeCompare(a.dueAt)).slice(0, 50),
+    strategies: Object.values(s.strategies).filter(live),
+    // Names of every agent, including trashed ones, so old ledger lines and calls still read well.
+    agentNames: Object.fromEntries(Object.values(s.agents).filter((a) => !a.purged).map((a) => [a.id, a.name])),
+    agents: Object.values(s.agents).filter(live).map((a) => ({ ...a, usage: s.usage[`agent:${a.id}`] ?? {} })),
+    intents: Object.values(s.intents).filter(live).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200).map((i) => intentView(s, i, now)),
+    lots: Object.values(s.lots).filter(live).map(lotView).sort((a, b) => b.date.localeCompare(a.date)),
+    evidence: recentFirst(s.evidence, 200, live),
+    notes: recentFirst(s.notes, 100, live),
+    playbooks: Object.values(s.playbooks).filter(live),
+    tasks: Object.values(s.tasks).filter(live).sort((a, b) => b.dueAt.localeCompare(a.dueAt)).slice(0, 50),
+    trash: trashView(s),
     calls: store.recentCalls(30),
     meta: {
       api: API_VERSION,
@@ -135,7 +142,10 @@ export function createApp(store, { port }) {
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, stateView(store));
       if (req.method === 'GET' && url.pathname === '/api/ledger') {
         const before = Number(url.searchParams.get('before')) || undefined;
-        return send(res, 200, { events: store.events({ before, limit: 100 }), chain: store.verify() });
+        // Purged items stay in the log (the chain must still check out) but their contents are not shown.
+        const purged = store.read((s) => purgedIds(s));
+        const events = store.events({ before, limit: 100 }).map((e) => (!e.type.startsWith('item.') && (purged.has(e.data.id) || purged.has(e.data.lotId)) ? { ...e, data: { id: e.data.id }, purged: true } : e));
+        return send(res, 200, { events, chain: store.verify() });
       }
 
       const action = req.method === 'POST' && url.pathname.startsWith('/api/action/') ? ACTIONS[url.pathname.slice(12)] : null;

@@ -6,6 +6,8 @@ import { resolveMarginPct } from './fees.js';
 import { planProblem } from './rules.js';
 import { UserError } from './settings.js';
 import { indiaDate } from './time.js';
+import { TRASH_KINDS } from './state.js';
+import { trashedItems } from './commands.js';
 
 export function intentStatus(intent, now) {
   return intent.status === 'pending' && Date.parse(intent.expiresAt) <= now ? 'expired' : intent.status;
@@ -58,4 +60,31 @@ export function recentFirst(list, limit, filter = () => true) {
   const out = [];
   for (let i = list.length - 1; i >= 0 && out.length < limit; i--) if (filter(list[i])) out.push(list[i]);
   return out;
+}
+
+/** A short name for an item, shown in the Trash. */
+function trashLabel(state, kind, x) {
+  switch (kind) {
+    case 'evidence': return `${x.symbol} · ${x.kind}${x.price ? ` ₹${x.price}` : x.summary ? `: ${x.summary.slice(0, 80)}` : ''}`;
+    case 'note': return `${x.symbol ? `${x.symbol} · ` : ''}${x.title}`;
+    case 'request': return x.kind === 'buy' ? `Buy ${x.symbol}` : x.kind === 'exit' ? `Sell ${x.qty} ${x.symbol}` : 'Settings change';
+    case 'lot': return `${x.symbol} · ${x.qty} shares bought ${x.date}`;
+    case 'task': return `${state.playbooks[x.playbookId]?.name ?? 'Playbook'} job due ${x.dueAt.slice(0, 16).replace('T', ' ')} UTC`;
+    default: return x.name;
+  }
+}
+
+/** Items in the Trash (not purged), newest first. */
+export function trashView(state) {
+  return TRASH_KINDS.flatMap((kind) => trashedItems(state, kind).map((x) => ({ kind, id: x.id, label: trashLabel(state, kind, x), at: x.trashed })))
+    .sort((a, b) => b.at.localeCompare(a.at));
+}
+
+export function purgedIds(state) {
+  const ids = new Set();
+  for (const kind of TRASH_KINDS) {
+    const all = { evidence: state.evidence, note: state.notes, request: Object.values(state.intents), lot: Object.values(state.lots), strategy: Object.values(state.strategies), playbook: Object.values(state.playbooks), agent: Object.values(state.agents), task: Object.values(state.tasks) }[kind];
+    for (const x of all) if (x.purged) ids.add(x.id);
+  }
+  return ids;
 }

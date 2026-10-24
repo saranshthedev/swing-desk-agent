@@ -54,7 +54,7 @@ export function runTasks({ claude = findClaude(), logDir = join(dataDir(), 'logs
 
 const DAY_CODES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
-function checkTime(time) {
+export function checkTime(time) {
   const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(time).trim());
   if (!m) throw new UserError(`“${time}” is not a time. Use HH:MM, for example 08:50.`);
   return `${m[1].padStart(2, '0')}:${m[2]}`;
