@@ -6,7 +6,7 @@ import { BUILTIN_STRATEGIES, validateStrategy, hasRequiredResearch, isExchangeBo
 import { LIBRARY_ITEMS, LIBRARY_GROUPS } from '../src/core/checklist-library.js';
 import { desk, PLAN, readyEvidence, answersFor, prepareAll } from './helpers.js';
 
-const NEW = ['trend', 'support-bounce', 'mean-reversion', 'smc', 'gap-hold', 'vcp', 'bull-flag', 'wyckoff-spring', 'rs-leader', 'double-bottom'];
+const NEW = ['trend', 'support-bounce', 'mean-reversion', 'smc', 'gap-hold', 'vcp', 'bull-flag', 'wyckoff-spring', 'rs-leader', 'double-bottom', 'cup-handle', 'ascending-triangle', 'inverse-hns', 'ma-reclaim', 'quality-pullback', 'failed-breakdown'];
 const byId = (id) => BUILTIN_STRATEGIES.find((s) => s.id === id);
 const libIds = new Set(LIBRARY_ITEMS.map((i) => i.id));
 
@@ -22,6 +22,12 @@ const PLANS = {
   'wyckoff-spring': { ...PLAN, target: 120, days: 18 },
   'rs-leader': { ...PLAN, target: 125, days: 25 },
   'double-bottom': { ...PLAN, target: 120, days: 18 },
+  'cup-handle': { ...PLAN, target: 125, days: 25 },
+  'ascending-triangle': { ...PLAN, target: 120, days: 15 },
+  'inverse-hns': { ...PLAN, target: 126, days: 25 },
+  'ma-reclaim': { ...PLAN, target: 120, days: 20 },
+  'quality-pullback': { ...PLAN, buyType: 'regular', marginPct: 100, target: 120, days: 40 },
+  'failed-breakdown': { ...PLAN, target: 122, days: 15 },
 };
 
 test('the Smart Money Concepts group is in the library with research and on-the-day items', () => {

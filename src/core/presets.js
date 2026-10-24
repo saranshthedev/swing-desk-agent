@@ -93,6 +93,12 @@ export const PLAN_DEFAULTS = Object.freeze({
   'wyckoff-spring': { days: 18, buyType: 'regular' },
   'rs-leader': { days: 25, buyType: 'regular' },
   'double-bottom': { days: 18, buyType: 'regular' },
+  'cup-handle': { days: 25, buyType: 'mtf', leverage: 2 },
+  'ascending-triangle': { days: 15, buyType: 'mtf', leverage: 2 },
+  'inverse-hns': { days: 25, buyType: 'mtf', leverage: 2 },
+  'ma-reclaim': { days: 20, buyType: 'regular' },
+  'quality-pullback': { days: 40, buyType: 'regular' },
+  'failed-breakdown': { days: 15, buyType: 'mtf', leverage: 2 },
   default: { days: 10, buyType: 'mtf', leverage: 2 },
 });
 
