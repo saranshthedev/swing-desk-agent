@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as C from '../src/core/commands.js';
 import { evaluate, portfolio } from '../src/core/rules.js';
-import { desk, PLAN, readyEvidence, answersFor } from './helpers.js';
+import { desk, PLAN, readyEvidence, answersFor, prepareAll } from './helpers.js';
 
 const buy = (agent, extra = {}) => agent.run(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'breakout', thesis: 'Breakout', plan: PLAN, ...extra });
 const checks = (d, id, answers) => d.store.read((s, now) => evaluate(s, s.intents[id], now, answers));
@@ -11,6 +11,7 @@ const status = (ev, checkId) => ev.checks.find((c) => c.id === checkId)?.status;
 test('a fully evidenced agent request is approvable only with the owner’s answers', () => {
   const d = desk();
   const agent = d.addAgent('propose');
+  prepareAll(d);
   readyEvidence(d, 'ABC', agent);
   const { id } = buy(agent, { claims: { 'volume-signal': 'Volume 2.1× average' } });
   const without = checks(d, id);
@@ -101,13 +102,14 @@ test('approving a settings request applies it; nothing changes before', () => {
 test('partial sale keeps the rest open at the same basis; fills cannot exceed approval', () => {
   const d = desk();
   const agent = d.addAgent('propose');
+  prepareAll(d); // now Monday 26 Oct
   readyEvidence(d, 'ABC', agent);
   const { id } = buy(agent);
   d.owner(C.approveIntent, { id, answers: answersFor(d) });
   const approved = d.store.read((s) => s.intents[id].decision.sizing.qty);
-  assert.throws(() => d.owner(C.recordBuyFill, { intentId: id, qty: approved + 1, price: 100.05, date: '2026-10-23' }), /more shares/);
-  const { lotId } = d.owner(C.recordBuyFill, { intentId: id, qty: approved, price: 100.05, date: '2026-10-23' });
-  const r = d.owner(C.recordSale, { lotId, qty: 10, price: 110, date: '2026-10-23', charges: 25 });
+  assert.throws(() => d.owner(C.recordBuyFill, { intentId: id, qty: approved + 1, price: 100.05, date: '2026-10-26' }), /more shares/);
+  const { lotId } = d.owner(C.recordBuyFill, { intentId: id, qty: approved, price: 100.05, date: '2026-10-26' });
+  const r = d.owner(C.recordSale, { lotId, qty: 10, price: 110, date: '2026-10-26', charges: 25 });
   assert.equal(r.pnl, (110 - 100.05) * 10 - 25);
   const lot = d.store.read((s) => s.lots[lotId]);
   assert.equal(lot.remaining, approved - 10);
@@ -118,11 +120,12 @@ test('partial sale keeps the rest open at the same basis; fills cannot exceed ap
 test('this week’s losses pause new buys', () => {
   const d = desk();
   const agent = d.addAgent('propose');
+  prepareAll(d); // now Monday 26 Oct, a new India week
   readyEvidence(d, 'ABC', agent);
   const { id } = buy(agent);
   d.owner(C.approveIntent, { id, answers: answersFor(d) });
-  const { lotId } = d.owner(C.recordBuyFill, { intentId: id, qty: 50, price: 100, date: '2026-10-23' });
-  d.owner(C.recordSale, { lotId, qty: 50, price: 30, date: '2026-10-23', charges: 0 });
+  const { lotId } = d.owner(C.recordBuyFill, { intentId: id, qty: 50, price: 100, date: '2026-10-26' });
+  d.owner(C.recordSale, { lotId, qty: 50, price: 30, date: '2026-10-26', charges: 0 });
   assert.equal(d.store.read((s, now) => portfolio(s, now).buysPaused), true);
   readyEvidence(d, 'XYZ', agent);
   const second = agent.run(C.submitIntent, { kind: 'buy', symbol: 'XYZ', strategyId: 'breakout', thesis: 'x', plan: PLAN });

@@ -6,7 +6,7 @@ import { CHECKLIST_LIBRARY, LIBRARY_ITEMS, SOURCES, WINDOW } from '../src/core/c
 import { BUILTIN_STRATEGIES, validateStrategy, strategyWindow, isExchangeBound, hasRequiredResearch } from '../src/core/strategies.js';
 import { EVIDENCE_KINDS } from '../src/core/evidence.js';
 import { createHandler } from '../src/mcp/server.js';
-import { desk, PLAN, readyEvidence } from './helpers.js';
+import { desk, PLAN, readyEvidence, prepareAll } from './helpers.js';
 
 const status = (ev, id) => ev.checks.find((c) => c.id === id)?.status;
 const attestIds = (d, strategyId, stage) => d.store.read((s) => s.strategies[strategyId].items.filter((i) => i.type === 'attest' && (!stage || i.stage === stage)).map((i) => i.id));
@@ -29,56 +29,65 @@ test('the library is complete and consistent', () => {
 test('market-wide evidence saved under MARKET counts for every stock', () => {
   const d = desk();
   const agent = d.addAgent('propose');
-  agent.run(C.addEvidence, { kind: 'macro', symbol: 'MARKET', summary: 'Nifty up, VIX calm, Brent flat, USDINR steady' });
+  const { id } = agent.run(C.addEvidence, { kind: 'macro', symbol: 'MARKET', summary: 'Nifty up, VIX calm, Brent flat, USDINR steady' });
+  const usdinr = (sym) => d.store.read((s, now) => researchStatus(s, sym, 'breakout', 'NSE', now)).checks.find((c) => c.id === 'item:currency-usdinr').status;
+  assert.equal(usdinr('AAA'), 'stale', 'an agent’s find counts only once verified');
+  d.owner(C.verifyEvidence, { id });
   for (const sym of ['AAA', 'BBB']) {
-    const r = d.store.read((s, now) => researchStatus(s, sym, 'breakout', now));
+    const r = d.store.read((s, now) => researchStatus(s, sym, 'breakout', 'NSE', now));
     assert.equal(r.checks.find((c) => c.id === 'item:currency-usdinr').status, 'pass');
-    assert.equal(r.checks.find((c) => c.id === 'item:fund-promoter').status, 'stale'); // per-stock evidence still needed
+    assert.equal(r.checks.find((c) => c.id === 'item:fund-promoter').status, 'missing'); // per-stock research still needed
   }
 });
 
-test('research answers given days ahead count at approval for 5 days, then expire', () => {
+test('research prepared days ahead counts at approval from the wait to expire, then expires', () => {
   const d = desk();
   const agent = d.addAgent('propose');
   const research = attestIds(d, 'breakout', 'research');
   const before = attestIds(d, 'breakout', 'before');
   assert.ok(research.length && before.length);
-  d.owner(C.saveResearch, { symbol: 'ABC', strategyId: 'breakout', answers: yes(research) });
-  d.clock.now += 3 * 86_400_000; // three days later
+  prepareAll(d); // prepared today, clock moves on three days
   readyEvidence(d, 'ABC', agent);
   const { id } = agent.run(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'breakout', thesis: 'x', plan: PLAN });
   const ev = d.store.read((s, now) => evaluate(s, s.intents[id], now, yes(before)));
   for (const r of research) assert.equal(status(ev, `item:${r}`), 'pass', r);
   assert.equal(ev.ready, true, ev.checks.filter((c) => c.required && c.status !== 'pass').map((c) => c.label).join('; '));
   d.clock.now += 3 * 86_400_000; // six days after the research
-  const late = d.store.read((s, now) => evaluate(s, s.intents[id], now, yes(before)));
-  assert.equal(status(late, `item:${research[0]}`), 'ask');
+  const late = d.store.read((s, now) => evaluate(s, s.intents[id], now, { ...yes(before), ...yes(research) }));
+  assert.equal(status(late, `item:${research[0]}`), 'expired', 'ticking it on the request page does not renew it');
 });
 
-test('only research-stage “you answer” items can be answered ahead, and a strategy edit clears them', () => {
+test('only research-stage items can be prepared ahead, and a strategy edit re-judges marks by its new window', () => {
   const d = desk();
   const before = attestIds(d, 'breakout', 'before');
+  assert.throws(() => d.owner(C.markPrepared, { symbol: 'ABC', strategyId: 'breakout', itemId: before[0], exchange: 'NSE', yes: true }), /not a research item/);
   assert.throws(() => d.owner(C.saveResearch, { symbol: 'ABC', strategyId: 'breakout', answers: yes([before[0]]) }), /not a research item/);
   const research = attestIds(d, 'breakout', 'research');
-  d.owner(C.saveResearch, { symbol: 'ABC', strategyId: 'breakout', answers: yes(research) });
+  for (const itemId of research) d.owner(C.markPrepared, { symbol: 'ABC', strategyId: 'breakout', itemId, exchange: 'NSE', yes: true });
+  d.clock.now += 3 * 86_400_000;
+  const r1 = d.store.read((st, now) => researchStatus(st, 'ABC', 'breakout', 'NSE', now));
+  assert.equal(r1.checks.find((c) => c.id === `item:${research[0]}`).status, 'pass');
   const s = d.store.read((st) => structuredClone(st.strategies.breakout));
-  d.owner(C.saveStrategy, s);
-  const r = d.store.read((st, now) => researchStatus(st, 'ABC', 'breakout', now));
-  assert.equal(r.checks.find((c) => c.id === `item:${research[0]}`).status, 'ask');
+  d.owner(C.saveStrategy, { ...s, bufferDays: 5, expireDays: 10 });
+  const r2 = d.store.read((st, now) => researchStatus(st, 'ABC', 'breakout', 'NSE', now));
+  assert.equal(r2.version, s.version + 1);
+  assert.equal(r2.checks.find((c) => c.id === `item:${research[0]}`).status, 'wait');
 });
 
 test('the Complete strategy is approvable with only its core items answered', () => {
   const d = desk();
   const agent = d.addAgent('propose');
+  prepareAll(d, 'ABC', 'complete');
   readyEvidence(d, 'ABC', agent, 'complete');
   const { id } = agent.run(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'complete', thesis: 'x', plan: PLAN });
   const core = d.store.read((s) => Object.fromEntries(s.strategies.complete.items.filter((i) => i.type === 'attest' && i.required).map((i) => [i.id, true])));
   const ev = d.store.read((s, now) => evaluate(s, s.intents[id], now, core));
   assert.equal(ev.ready, true, ev.checks.filter((c) => c.required && c.status !== 'pass').map((c) => c.label).join('; '));
   assert.ok(ev.checks.some((c) => c.status === 'ask' && !c.required), 'optional items stay visible as notes');
+  assert.ok(ev.checks.some((c) => c.status === 'missing' && !c.required), 'optional research never blocks');
 });
 
-test('agents can read the library and a stock’s research status, but cannot answer research', () => {
+test('agents can read the library and a stock’s research status, but cannot answer or prepare research', () => {
   const d = desk();
   const agent = d.addAgent('propose');
   const handle = createHandler(d.store, agent.key);
@@ -86,9 +95,13 @@ test('agents can read the library and a stock’s research status, but cannot an
   assert.ok(call('get_checklist_library').structuredContent.groups.length >= 15);
   const r = call('get_research_status', { symbol: 'abc', strategyId: 'pullback' }).structuredContent;
   assert.equal(r.symbol, 'ABC');
+  assert.equal(r.exchange, 'NSE');
+  assert.deepEqual(r.window, { bufferDays: 3, expireDays: 5 });
+  assert.equal(r.readyOn, null);
+  assert.equal(call('get_research_status', { symbol: 'abc', strategyId: 'pullback', exchange: 'BSE' }).structuredContent.exchange, 'BSE');
   assert.ok(r.checks.some((c) => c.stage === 'research') && r.checks.some((c) => c.stage === 'before'));
   const names = handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' }).result.tools.map((t) => t.name);
-  assert.ok(!names.some((n) => /research_save|answer/.test(n)));
+  assert.ok(!names.some((n) => /research_save|answer|prepare|mark/.test(n)));
 });
 
 const attestItem = (id, stage, required = true) => ({ id, stage, type: 'attest', label: id, required });

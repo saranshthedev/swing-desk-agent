@@ -5,7 +5,7 @@ import * as C from '../src/core/commands.js';
 import { latestEvidence, portfolio } from '../src/core/rules.js';
 import { createApp } from '../src/http/server.js';
 import { TOOLS } from '../src/mcp/tools.js';
-import { desk, PLAN, readyEvidence, answersFor } from './helpers.js';
+import { desk, PLAN, readyEvidence, answersFor, prepareAll } from './helpers.js';
 
 const buy = (d) => d.owner(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'breakout', thesis: 'Breakout', plan: PLAN });
 
@@ -27,6 +27,7 @@ test('trash hides an item, restore brings it back, purge hides it for good and k
 
 test('items that affect money or waiting decisions cannot be trashed yet', () => {
   const d = desk();
+  prepareAll(d); // now Monday 26 Oct
   readyEvidence(d);
   const { id } = buy(d);
   assert.throws(() => d.owner(C.moveToTrash, { kind: 'request', id }), /Reject it first/);
@@ -34,9 +35,9 @@ test('items that affect money or waiting decisions cannot be trashed yet', () =>
   d.owner(C.approveIntent, { id, answers: answersFor(d) });
   assert.throws(() => d.owner(C.moveToTrash, { kind: 'request', id }), /Record the fill/);
   const qty = d.store.read((s) => s.intents[id].decision.sizing.qty);
-  const { lotId } = d.owner(C.recordBuyFill, { intentId: id, qty, price: 100, date: '2026-10-23' });
+  const { lotId } = d.owner(C.recordBuyFill, { intentId: id, qty, price: 100, date: '2026-10-26' });
   assert.throws(() => d.owner(C.moveToTrash, { kind: 'lot', id: lotId }), /still open/);
-  d.owner(C.recordSale, { lotId, qty, price: 90, date: '2026-10-23' });
+  d.owner(C.recordSale, { lotId, qty, price: 90, date: '2026-10-26' });
   const before = d.store.read((s, now) => portfolio(s, now).weekPnl);
   d.owner(C.moveToTrash, { kind: 'lot', id: lotId });
   d.owner(C.moveToTrash, { kind: 'request', id });

@@ -67,10 +67,11 @@ export const TOOLS = {
 
   get_research_status: {
     level: 'read',
-    description: 'For one stock and strategy, which checklist items already pass and which still need evidence or the owner’s answer, split into research (days before) and before-buy (on the day) stages. Call it before researching and before proposing.',
-    inputSchema: obj({ symbol, strategyId: str('Strategy id from list_strategies', 40) }, ['symbol', 'strategyId']),
+    description: 'For one stock and strategy, which checklist items already pass and which still need evidence or the owner’s answer, split into research (days before) and before-buy (on the day) stages. Research items count only after the owner prepares them and the strategy’s wait has passed (status wait, with validFrom); readyOn is the first India date all required research counts. Call it before researching and before proposing.',
+    inputSchema: obj({ symbol, strategyId: str('Strategy id from list_strategies', 40), exchange: { type: 'string', enum: ['NSE', 'BSE'], description: 'Exchange for price-based items (default NSE)' } }, ['symbol', 'strategyId']),
     run: (store, _a, args) => store.read((s, now) => {
-      const r = researchStatus(s, String(args.symbol ?? '').trim().toUpperCase(), args.strategyId, now);
+      if (args.exchange !== undefined && args.exchange !== 'NSE' && args.exchange !== 'BSE') throw new UserError('Exchange must be NSE or BSE.');
+      const r = researchStatus(s, String(args.symbol ?? '').trim().toUpperCase(), args.strategyId, args.exchange ?? 'NSE', now);
       if (!r) throw new UserError('Unknown strategy.');
       return r;
     }),

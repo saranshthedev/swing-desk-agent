@@ -29,8 +29,8 @@ const actorName = (actor) => {
 /** A stock symbol that opens its stock page. */
 const symLink = (sym) => (sym ? `<a class="sym" href="#/stock/${esc(encodeURIComponent(sym))}">${esc(sym)}</a>` : '');
 const byLine = (actor) => (actor === 'owner' ? 'You' : `${esc(actorName(actor))} · <span class="tag tag-warn">not verified</span>`);
-const STATUS_TAG = { pass: 'tag-ok', fail: 'tag-bad', stale: 'tag-warn', ask: 'tag-ask', info: 'tag-muted' };
-const STATUS_TEXT = { pass: 'Pass', fail: 'Fail', stale: 'Needs update', ask: 'Your answer', info: 'Note' };
+const STATUS_TAG = { pass: 'tag-ok', fail: 'tag-bad', stale: 'tag-warn', ask: 'tag-ask', info: 'tag-muted', wait: 'tag-warn', missing: 'tag-ask', expired: 'tag-warn', broken: 'tag-bad' };
+const STATUS_TEXT = { pass: 'Pass', fail: 'Fail', stale: 'Needs update', ask: 'Your answer', info: 'Note', wait: 'Wait', missing: 'Not prepared', expired: 'Expired', broken: 'Prepare again' };
 const SCOPE_HELP = {
   off: 'Sees nothing. New agents start here.',
   read: 'Reads your plans, limits and lots; runs calculators; picks up its playbook tasks.',

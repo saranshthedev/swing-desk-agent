@@ -5,7 +5,11 @@ import { estimateCosts, fundingLabel } from './fees.js';
 import { sizePlan } from './sizing.js';
 import { FIXED } from './settings.js';
 import { daysBetween, indiaDate, indiaWeekStart } from './time.js';
-import { MARKET, WINDOW } from './checklist-library.js';
+import { LIBRARY_ITEMS, MARKET, toStrategyItem } from './checklist-library.js';
+import { EXCHANGE_KINDS } from './evidence.js';
+import { counts, latestCounting } from './knowledge.js';
+import { hasRequiredResearch, isExchangeBound, strategyWindow } from './strategies.js';
+import { preparable, readyOn, researchItemState } from './prepare.js';
 
 const money = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
@@ -103,41 +107,44 @@ function strategyChecks(state, intent, plan, sizing, now, answers) {
     return [check('strategy', strategy.name, 'fail', `The checklist changed after this request (v${intent.strategyVersion} → v${strategy.version}). Ask for a new request.`)];
   }
   const out = [check('strategy', `Strategy: ${strategy.name}`, 'pass', `Checklist version ${strategy.version}`)];
-  const ctx = { symbol: intent.symbol, claims: intent.claims, answers, research: researchFor(state, intent.symbol, strategy, now), plan, sizing, now };
+  // Saving refuses such a strategy, but one saved before that rule cannot have buys approved.
+  if (!hasRequiredResearch(strategy)) out.push(check('strategy-research', 'Strategy has required research', 'fail', 'This strategy has no required research items. Edit it first.'));
+  const ctx = { strategy, symbol: intent.symbol, exchange: plan.exchange, claims: intent.claims, answers, plan, sizing, now };
   for (const item of strategy.items) out.push(itemCheck(state, item, ctx));
   return out;
 }
 
-/** Owner research answers for a stock + strategy that are still valid (same version, ≤ 5 India days old). */
-export function researchFor(state, symbol, strategy, now) {
-  const saved = state.research[`${symbol}|${strategy.id}`];
-  if (!saved || saved.version !== strategy.version) return {};
-  const today = indiaDate(now);
-  return Object.fromEntries(Object.entries(saved.items).filter(([, at]) => daysBetween(indiaDate(Date.parse(at)), today) <= WINDOW.defaultExpire));
-}
-
 /**
- * One strategy checklist item. ctx: { symbol, claims, answers (today's ticks), research (saved
- * research answers), plan & sizing (absent on the Prepare page), now }.
+ * One strategy checklist item. ctx: { strategy, symbol, exchange, claims, answers (today's
+ * ticks, used only for on-the-day items), plan & sizing (absent on the Prepare page), now }.
+ * Research items pass only on a Prepare mark inside the strategy's window (prepare.js).
  */
 export function itemCheck(state, item, ctx) {
   const meta = { group: item.group ?? null, stage: item.stage ?? 'before', help: item.help ?? '', type: item.type };
-  const done = (status, detail) => ({ ...check(`item:${item.id}`, item.label, status, detail, item.type === 'rule' ? true : item.required), ...meta });
+  const done = (status, detail, extra = {}) => ({ ...check(`item:${item.id}`, item.label, status, detail, item.type === 'rule' ? true : item.required), ...meta, ...extra });
   const today = indiaDate(ctx.now);
+  const claim = ctx.claims?.[item.id];
+  if (preparable(item)) {
+    const r = researchItemState(state, ctx.strategy, item, ctx.symbol, ctx.exchange, ctx.now);
+    const dates = r.validFrom ? { validFrom: r.validFrom, expiresOn: r.expiresOn } : {};
+    return done(r.status, `${r.detail}${r.status !== 'pass' && claim ? ` Agent says (not verified): ${claim}` : ''}`, dates);
+  }
   if (item.type === 'attest') {
     if (ctx.answers?.[item.id] === true) return done('pass', 'You ticked this now.');
-    const researchedAt = meta.stage === 'research' ? ctx.research?.[item.id] : null;
-    if (researchedAt) return done('pass', `You checked this in research on ${indiaDate(Date.parse(researchedAt))}. Valid for ${WINDOW.defaultExpire} days.`);
-    const claim = ctx.claims?.[item.id];
     return done('ask', claim ? `Agent says (not verified): ${claim}` : (item.help || 'Tick this yourself.'));
   }
   if (item.type === 'evidence') {
     const market = item.scope === 'market';
-    const ev = latestEvidence(state, item.kind, market ? MARKET : ctx.symbol);
+    const symbol = market ? MARKET : ctx.symbol;
+    const onExchange = isExchangeBound(item) && EXCHANGE_KINDS.has(item.kind);
+    const ev = latestCounting(state, { kind: item.kind, symbol, exchange: onExchange ? ctx.exchange : undefined, today });
     const age = ev ? daysBetween(indiaDate(Date.parse(ev.observedAt)), today) : Infinity;
-    const maxAge = item.maxAgeDays ?? WINDOW.defaultExpire; // research evidence has no age of its own
-    if (ev && age <= maxAge) return done('pass', `${ev.by === 'owner' ? 'You' : 'Agent (not verified)'}${market ? ' · market-wide' : ''}: ${(ev.summary || '').slice(0, 140)}`);
-    return done('stale', `Needs “${item.kind}” evidence${market ? ` saved under ${MARKET}` : ''} from ${maxAge === 0 ? 'today' : `the last ${maxAge} day(s)`}.`);
+    const maxAge = item.maxAgeDays ?? 0;
+    const where = `${market ? ' · market-wide' : ''}${onExchange ? ` · ${ctx.exchange}` : ''}`;
+    if (ev && age <= maxAge) return done('pass', `${ev.by === 'owner' ? 'You' : 'Verified by you'}${where}: ${(ev.summary || '').slice(0, 140)}`);
+    const found = latestEvidence(state, item.kind, symbol);
+    const hint = found && !counts(found, today) ? ' A record was found but is not verified yet; verify it if it is right.' : '';
+    return done('stale', `Needs a “${item.kind}” record${market ? ` saved under ${MARKET}` : ''}${onExchange ? ` for ${ctx.exchange}` : ''} that you entered or verified, from ${maxAge === 0 ? 'today' : `the last ${maxAge} day(s)`}.${hint}`);
   }
   if (!ctx.plan) return done('info', 'Checked automatically when you make the plan.');
   const pass = {
@@ -149,18 +156,33 @@ export function itemCheck(state, item, ctx) {
   return done(pass ? 'pass' : 'fail', pass ? 'Plan meets this rule' : 'Plan breaks this rule');
 }
 
-/** Research-stage status for a stock before any request exists (the Prepare page and agents). */
-export function researchStatus(state, symbol, strategyId, now) {
-  const strategy = state.strategies[strategyId];
-  if (!strategy) return null;
-  const ctx = { symbol, answers: {}, research: researchFor(state, symbol, strategy, now), now };
+/** Checks for a stock before any request exists, with readyOn from the required research items. */
+function preparedStatus(state, strategy, symbol, exchange, now) {
+  const ctx = { strategy, symbol, exchange, answers: {}, now };
   const checks = strategy.items.map((item) => itemCheck(state, item, ctx));
   const research = checks.filter((c) => c.stage === 'research');
+  const gating = checks.filter((c, i) => c.required && preparable(strategy.items[i]));
   return {
-    strategyId, strategyName: strategy.name, version: strategy.version, symbol,
+    exchange,
+    window: strategyWindow(strategy),
     checks,
     researchDone: research.every((c) => !c.required || c.status === 'pass' || c.status === 'info'),
+    readyOn: readyOn(gating),
   };
+}
+
+/** Research-stage status for a stock before any request exists (the Prepare page and agents). */
+export function researchStatus(state, symbol, strategyId, exchange, now) {
+  const strategy = state.strategies[strategyId];
+  if (!strategy) return null;
+  return { strategyId, strategyName: strategy.name, version: strategy.version, symbol, ...preparedStatus(state, strategy, symbol, exchange, now) };
+}
+
+const MASTER = { id: 'master', name: 'Master list', items: LIBRARY_ITEMS.map((i) => toStrategyItem(i)) };
+
+/** Every library item for a stock, with the default window (shown in Prepare; never gates approval). */
+export function masterStatus(state, symbol, exchange, now) {
+  return { symbol, ...preparedStatus(state, MASTER, symbol, exchange, now) };
 }
 
 export function evaluateBuy(state, intent, now, answers = {}) {

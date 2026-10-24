@@ -8,8 +8,10 @@ import { estimateCosts, resolveMarginPct, FEE_DEFAULTS } from './fees.js';
 import { validateSchedule } from './schedule.js';
 import { daysBetween, indiaDate, isDate } from './time.js';
 import { EVIDENCE_KINDS, EXCHANGE_KINDS, NEEDS_OWNER_CONFIRMATION } from './evidence.js';
-import { suggestGoodUntil } from './knowledge.js';
-import { validateStrategy } from './strategies.js';
+import { counts, suggestGoodUntil } from './knowledge.js';
+import { validateStrategy, isExchangeBound } from './strategies.js';
+import { LIBRARY_ITEMS, toStrategyItem } from './checklist-library.js';
+import { markExchange, markKey, preparable, recordSymbol } from './prepare.js';
 import { TRASH_KINDS, findItem } from './state.js';
 import { intentStatus } from './views.js';
 
@@ -418,7 +420,10 @@ export function changeStop(state, { lotId, stop }) {
 
 // ---------- research (stage 1, days before the trade) ----------
 
-/** The owner ticks research-stage “you answer” items for a stock + strategy. Valid 5 days. */
+/**
+ * Old research answers for a stock + strategy. Still accepted by the web page until it moves to
+ * markPrepared, but research.answered no longer satisfies any check.
+ */
 export function saveResearch(state, { symbol, strategyId, answers }) {
   const strategy = state.strategies[strategyId];
   if (!strategy) throw new UserError('Choose a strategy.');
@@ -429,6 +434,44 @@ export function saveResearch(state, { symbol, strategyId, answers }) {
     if (typeof v !== 'boolean') throw new UserError('Answers must be yes or no.');
   }
   return { events: [{ type: 'research.answered', data: { symbol: symbolOf(symbol), strategyId, strategyVersion: strategy.version, answers } }] };
+}
+
+/**
+ * The owner marks a research item as prepared for a stock (or removes the mark with yes:
+ * false). The item comes from the strategy, or from the checklist library when no strategy is
+ * given. Evidence items need a record that counts now, for this stock (MARKET for market-wide
+ * items), of the item's kind and, for exchange data, on the same exchange. The mark counts
+ * only after the strategy's wait (see prepare.js).
+ */
+export function markPrepared(state, input, { actor, now }) {
+  if (actor !== 'owner') throw new UserError('Only the owner can prepare research items.');
+  const symbol = symbolOf(input.symbol);
+  let strategy = null;
+  let item;
+  if (input.strategyId !== undefined && input.strategyId !== null && input.strategyId !== '') {
+    strategy = state.strategies[input.strategyId];
+    if (!strategy || strategy.trashed) throw new UserError('Choose a strategy.');
+    item = strategy.items.find((i) => i.id === input.itemId);
+  } else {
+    const lib = LIBRARY_ITEMS.find((i) => i.id === input.itemId);
+    item = lib && toStrategyItem(lib);
+  }
+  if (!item || !preparable(item)) throw new UserError(`“${input.itemId}” is not a research item you can prepare ahead${strategy ? ` in ${strategy.name}` : ''}.`);
+  if (typeof input.yes !== 'boolean') throw new UserError('Say yes or no.');
+  const exchange = markExchange(item, input.exchange);
+  if (isExchangeBound(item) && exchange !== 'NSE' && exchange !== 'BSE') throw new UserError('This item rests on exchange data. Say which exchange you checked: NSE or BSE.');
+  const data = { symbol, key: markKey(strategy ?? { id: '' }, item), ...(exchange ? { exchange } : {}), yes: input.yes };
+  if (input.yes && item.type === 'evidence') {
+    const want = recordSymbol(item, symbol);
+    const e = state.evidence.find((x) => x.id === input.evidenceId);
+    if (!e || e.trashed) throw new UserError(`Choose the verified “${item.kind}” record this rests on.`);
+    if (e.kind !== item.kind) throw new UserError(`This item needs a “${item.kind}” record, not “${e.kind}”.`);
+    if (e.symbol !== want) throw new UserError(`This item needs a record saved under ${want}.`);
+    if (e.exchange !== undefined && exchange !== undefined && e.exchange !== exchange) throw new UserError(`That record is for ${e.exchange}, not ${exchange}.`);
+    if (!counts(e, indiaDate(now))) throw new UserError('That record does not count yet: only records you entered or verified, still within good-until, can be used.');
+    data.evidenceId = e.id;
+  }
+  return { events: [{ type: 'prepare.marked', data }] };
 }
 
 // ---------- strategies ----------

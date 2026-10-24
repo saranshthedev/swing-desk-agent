@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from './settings.js';
 import { FEE_DEFAULTS } from './fees.js';
 import { indiaDate } from './time.js';
 import { BUILTIN_STRATEGIES } from './strategies.js';
+import { preparedKey } from './prepare.js';
 
 export function initialState() {
   return {
@@ -23,6 +24,7 @@ export function initialState() {
     tasks: {},
     taskSlots: new Set(),
     research: {},
+    prepared: {},
     usage: {},
   };
 }
@@ -33,7 +35,8 @@ const reducers = {
   'automation.paused': (s) => { s.automationPaused = true; },
   'automation.resumed': (s) => { s.automationPaused = false; },
   'strategy.saved': (s, d) => { s.strategies[d.id] = { ...d, builtin: !!s.strategies[d.id]?.builtin }; },
-  // Owner research answers for a stock + strategy: item id → time answered. A new strategy
+  // Old owner research answers (kept for replay; they no longer satisfy any check, Prepare
+  // marks do): stock + strategy → item id → time answered. A new strategy
   // version starts a fresh record; `false` removes an answer.
   'research.answered': (s, d, e) => {
     const key = `${d.symbol}|${d.strategyId}`;
@@ -44,6 +47,13 @@ const reducers = {
       else delete items[id];
     }
     s.research[key] = { version: d.strategyVersion, items };
+  },
+  // A Prepare mark: stock + item key (+ exchange for exchange-bound items) → time marked and
+  // the record used. `yes: false` removes the mark.
+  'prepare.marked': (s, d, e) => {
+    const key = preparedKey(d.symbol, d.key, d.exchange);
+    if (d.yes) s.prepared[key] = { at: e.at, ...(d.evidenceId ? { evidenceId: d.evidenceId } : {}) };
+    else delete s.prepared[key];
   },
 
   'agent.added': (s, d) => { s.agents[d.id] = { ...d, revoked: false }; },
