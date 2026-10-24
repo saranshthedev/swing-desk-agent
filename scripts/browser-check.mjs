@@ -232,6 +232,26 @@ try {
   await until(() => js('!!document.querySelector(".prep-master form[data-form=prep-evidence]")'), 'inline record form');
   await submit('prep-evidence', { summary: 'Synthetic inline record' }, { nth: 0 });
   assert.match(await toast(), /Record saved and used/);
+  // A fresher copy that arrives while you type is announced, never silently held back.
+  await delay(800); // let the reload after the save finish first
+  await cdp('Fetch.enable', { patterns: [{ urlPattern: '*prepare.status*', requestStage: 'Request' }] });
+  const pausedLoad = new Promise((ok) => {
+    const prev = ws.onmessage;
+    ws.onmessage = (m) => {
+      prev(m);
+      const msg = JSON.parse(m.data);
+      if (msg.method === 'Fetch.requestPaused') { ws.onmessage = prev; ok(msg.params.requestId); }
+    };
+  });
+  await click('.prep-master [data-action=prepare-mark]');
+  await toast(); // the page has redrawn and asked for a fresh copy, which is held
+  const pausedId = await pausedLoad;
+  await js('(() => { const t = document.querySelector(".prep-master form[data-form=prep-evidence] textarea"); for (let d = t.closest("details"); d; d = d.parentElement.closest("details")) d.open = true; t.focus(); return document.activeElement === t; })()').then((ok) => assert.ok(ok, 'typing in a Prepare form'));
+  await cdp('Fetch.continueRequest', { requestId: pausedId });
+  await cdp('Fetch.disable');
+  await until(() => js('!document.querySelector(".prep-newer").hidden'), 'newer-data marker');
+  await click('[data-action=prep-redraw]');
+  await until(() => js('document.querySelector(".prep-newer")?.hidden === true'), 'redrawn with the newer copy');
 
   // Owner reviews the agent's request in the browser.
   await go(`#/request/${proposed.id}`);
@@ -251,6 +271,11 @@ try {
 
   await submit('approve', { pin: '24681357' });
   assert.match(await toast(), /Not ready to approve/);
+  // Verify shows the good-until date it will apply (prefilled, changeable) and the toast names it.
+  assert.match(await js('document.querySelector("form[data-form=approve] .verify [data-verify-date]").value'), /^\d{4}-\d{2}-\d{2}$/);
+  const chosen = await js('(() => { const box = document.querySelector("form[data-form=approve] .verify"); box.open = true; const i = box.querySelector("[data-verify-date]"); i.value = new Date(Date.parse(i.min + "T00:00:00Z") + 2 * 86400000).toISOString().slice(0, 10); return i.value; })()');
+  await click('form[data-form=approve] .verify [data-action=verify-evidence]');
+  assert.match(await toast(), new RegExp(`Verified\. It counts until ${chosen}`));
   // On the day: verify Claude's finds, confirm price and MTF against Kite, tick the on-the-day items.
   await until(async () => {
     const b = await js('(() => { const b = document.querySelector("form[data-form=approve] [data-action=verify-evidence], [data-action=confirm-evidence]"); if (b && !b.disabled) { b.click(); return "clicked"; } return b ? "busy" : "done"; })()');
@@ -288,9 +313,16 @@ try {
   assert.match(await text(), /Flagged/);
   assert.ok(await js('!!document.querySelector("main [data-action=verify-evidence]")'), 'Verify on the stock page');
   await waitText('Desk rules', 'recommendation summary');
-  const nthText = await js('[...document.querySelectorAll("form[data-form=correct]")].findIndex((f) => f.elements.summary)');
-  await js(`document.querySelectorAll("details.correct")[${nthText}].open = true`);
-  await submit('correct', { summary: 'Synthetic corrected figure', reason: 'Synthetic correction for testing' }, { nth: nthText });
+  await until(async () => !(await text()).includes('Loading the full list'), 'full record list');
+  // One step in the page, so a redraw in between cannot swap the form.
+  await clearToast();
+  await js(`(() => {
+    const f = [...document.querySelectorAll('form[data-form=correct]')].find((x) => x.elements.summary);
+    f.closest('details').open = true;
+    f.elements.summary.value = 'Synthetic corrected figure';
+    f.elements.reason.value = 'Synthetic correction for testing';
+    f.requestSubmit();
+  })()`);
   assert.match(await toast(), /Corrected/);
   await waitText('Corrected');
   await js('document.querySelector("form[data-form=note] .fold").click()');

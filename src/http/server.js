@@ -60,6 +60,10 @@ const ACTIONS = {
       strategies: Object.values(s.strategies).filter((x) => x.enabled && live(x)).map((x) => researchStatus(s, symbol, x.id, exchange, now)),
       desk: deskRecommendation(s, symbol, exchange, now),
       agent: latestRecommendation(s, symbol, exchange),
+      // Every live record for this stock and MARKET (not just the 200 newest of all stocks in
+      // stateView), so the page never hides a record the checks still count.
+      records: recentFirst(s.evidence, 500, (e) => live(e) && !e.purged && (e.symbol === symbol || e.symbol === MARKET))
+        .map((e) => ({ ...e, status: recordStatus(e, indiaDate(now)) })),
     };
   })],
   'evidence.verify': [false, owner(C.verifyEvidence)],

@@ -95,3 +95,22 @@ test('evidence.verify, correct and flag work without a PIN; old research routes 
     assert.equal(state.meta.api, 4);
   } finally { t.server.close(); }
 });
+
+test('prepare.status returns every live record for the stock and MARKET, even past the 200 newest', async () => {
+  const t = await serve();
+  try {
+    const old = t.d.owner(C.addEvidence, { kind: 'fundamentals', symbol: 'OLDCO', summary: 'Old but still good' }).id;
+    const gone = t.d.owner(C.addEvidence, { kind: 'news', symbol: 'OLDCO', summary: 'Trashed' }).id;
+    t.d.owner(C.moveToTrash, { kind: 'evidence', id: gone });
+    const market = t.d.owner(C.addEvidence, { kind: 'macro', symbol: 'MARKET', summary: 'Market check' }).id;
+    for (let n = 0; n < 205; n++) t.d.owner(C.addEvidence, { kind: 'news', symbol: `X${n}`, summary: 'filler' });
+    const state = await (await fetch(`${t.base}/api/state`, { headers: { 'X-CSRF': t.csrf } })).json();
+    assert.equal(state.evidence.some((e) => e.id === old), false, 'the global list is capped');
+    const r = (await (await t.post('prepare.status', { symbol: 'oldco', exchange: 'NSE' })).json()).result;
+    const ids = r.records.map((e) => e.id);
+    assert.ok(ids.includes(old) && ids.includes(market));
+    assert.equal(ids.includes(gone), false, 'trashed records are left out');
+    assert.equal(r.records.find((e) => e.id === old).status, 'verified');
+    assert.ok(r.records.every((e) => e.symbol === 'OLDCO' || e.symbol === 'MARKET'));
+  } finally { t.server.close(); }
+});

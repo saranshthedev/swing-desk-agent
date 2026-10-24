@@ -146,3 +146,23 @@ test('list_evidence filters by status and returns status; get_recommendation ret
   assert.equal(rec.agent.call, 'wait');
   assert.equal(c.tool('get_recommendation', { symbol: 'ABC', exchange: 'XX' }).isError, true);
 });
+
+test('list_evidence never shows trashed or deleted-forever records, and refuses status trashed', () => {
+  const d = desk();
+  const agent = d.addAgent('draft');
+  const c = client(d, agent.key);
+  const keep = c.tool('add_evidence', { kind: 'news', symbol: 'ABC', summary: 'kept' }).structuredContent.id;
+  const trashed = c.tool('add_evidence', { kind: 'news', symbol: 'ABC', summary: 'trashed' }).structuredContent.id;
+  const purged = c.tool('add_evidence', { kind: 'news', symbol: 'ABC', summary: 'purged' }).structuredContent.id;
+  d.owner(C.moveToTrash, { kind: 'evidence', id: trashed });
+  d.owner(C.moveToTrash, { kind: 'evidence', id: purged });
+  d.owner(C.purgeFromTrash, { kind: 'evidence', id: purged });
+  for (const args of [{}, { symbol: 'ABC' }, { status: 'found' }, { limit: 200 }]) {
+    const ids = c.tool('list_evidence', args).structuredContent.result.map((e) => e.id);
+    assert.ok(ids.includes(keep));
+    assert.equal(ids.includes(trashed) || ids.includes(purged), false, JSON.stringify(args));
+  }
+  const refused = c.tool('list_evidence', { status: 'trashed' });
+  assert.equal(refused.isError, true);
+  assert.doesNotMatch(refused.content[0].text, /trashed"|purged/);
+});

@@ -121,19 +121,21 @@ export const TOOLS = {
 
   list_evidence: {
     level: 'read',
-    description: `Recent evidence records, each with a status: found (agent-found, not yet verified), verified (counts), expired, corrected or trashed. Items with by = "owner" were entered by the owner. Read the verified records first (status "verified") before searching the web. Filter by symbol, topic, exchange or status. ${UNTRUSTED}`,
+    description: `Recent evidence records, each with a status: found (agent-found, not yet verified), verified (counts), expired or corrected. Records the owner moved to the Trash are never shown. Items with by = "owner" were entered by the owner. Read the verified records first (status "verified") before searching the web. Filter by symbol, topic, exchange or status. ${UNTRUSTED}`,
     inputSchema: obj({
       symbol,
       topic: str('Checklist item id the record answers', 80),
       exchange: { type: 'string', enum: ['NSE', 'BSE'] },
-      status: { type: 'string', enum: ['found', 'verified', 'expired', 'corrected', 'trashed'] },
+      status: { type: 'string', enum: ['found', 'verified', 'expired', 'corrected'] },
       limit: int('Max items, default 30'),
     }),
     run: (store, _a, args) => store.read((s, now) => {
       if (args.exchange !== undefined) exchangeOf(args.exchange);
+      // Agents never see records the owner moved to the Trash or deleted forever.
+      if (args.status !== undefined && !['found', 'verified', 'expired', 'corrected'].includes(args.status)) throw new UserError('Status must be found, verified, expired or corrected.');
       const today = indiaDate(now);
       const sym = args.symbol ? symbolOf(args.symbol) : null;
-      return recentFirst(s.evidence, Math.min(200, args.limit ?? 30), (e) => (args.status === 'trashed' || !e.trashed)
+      return recentFirst(s.evidence, Math.min(200, args.limit ?? 30), (e) => !e.trashed && !e.purged
         && (!sym || e.symbol === sym)
         && (args.topic === undefined || e.topic === args.topic)
         && (args.exchange === undefined || e.exchange === args.exchange)

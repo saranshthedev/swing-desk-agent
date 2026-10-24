@@ -192,7 +192,7 @@ export function verifyEvidence(state, input, { actor, now }) {
   const goodUntil = input.goodUntil === undefined
     ? suggestGoodUntil(e.kind, today)
     : goodUntilDate(input.goodUntil, today);
-  return { events: [{ type: 'evidence.verified', data: { id: e.id, goodUntil } }] };
+  return { events: [{ type: 'evidence.verified', data: { id: e.id, goodUntil } }], result: { id: e.id, goodUntil } };
 }
 
 /**
