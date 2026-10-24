@@ -25,6 +25,7 @@ export function initialState() {
     taskSlots: new Set(),
     research: {},
     prepared: {},
+    recommendations: [],
     usage: {},
   };
 }
@@ -55,6 +56,9 @@ const reducers = {
     if (d.yes) s.prepared[key] = { at: e.at, ...(d.evidenceId ? { evidenceId: d.evidenceId } : {}) };
     else delete s.prepared[key];
   },
+
+  // A wait/buy/hold/sell call someone stored. Information only; the desk never acts on it.
+  'recommendation.added': (s, d, e) => { s.recommendations.push({ ...d, by: e.actor, at: e.at }); },
 
   'agent.added': (s, d) => { s.agents[d.id] = { ...d, revoked: false }; },
   'agent.updated': (s, d) => { Object.assign(s.agents[d.id], d); },
@@ -130,7 +134,7 @@ export function findItem(state, kind, id) {
 export const live = (item) => !item.trashed;
 
 /** Event types an agent's daily write quota counts, and those its intent quota counts. */
-const WRITE_TYPES = new Set(['evidence.added', 'evidence.flagged', 'note.added', 'task.completed', 'task.failed']);
+const WRITE_TYPES = new Set(['evidence.added', 'evidence.flagged', 'note.added', 'recommendation.added', 'task.completed', 'task.failed']);
 
 export function apply(state, event) {
   const reducer = reducers[event.type];

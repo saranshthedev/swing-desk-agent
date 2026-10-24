@@ -254,6 +254,24 @@ export function addNote(state, input, { newId }) {
   return { events: [{ type: 'note.added', data }], result: { id: data.id } };
 }
 
+/** A wait/buy/hold/sell call from the owner or an agent. Shown as not verified; never acted on. */
+export function addRecommendation(state, input, { newId }) {
+  if (!['wait', 'buy', 'hold', 'sell'].includes(input.call)) throw new UserError('The call must be wait, buy, hold or sell.');
+  if (input.exchange !== 'NSE' && input.exchange !== 'BSE') throw new UserError('Say which exchange this is for: NSE or BSE.');
+  const ids = input.strategyIds ?? [];
+  if (!Array.isArray(ids) || ids.length > 20 || ids.some((id) => typeof id !== 'string' || !state.strategies[id])) throw new UserError('Strategy ids must be a list of existing strategies.');
+  const data = {
+    id: newId('rec'),
+    symbol: symbolOf(input.symbol),
+    exchange: input.exchange,
+    call: input.call,
+    strategyIds: [...new Set(ids)],
+    reasons: text(input.reasons, 'Reasons', 4_000),
+    sources: sources(input.sources),
+  };
+  return { events: [{ type: 'recommendation.added', data }], result: { id: data.id } };
+}
+
 // ---------- intents ----------
 
 export function submitIntent(state, input, { actor, newId, now }) {

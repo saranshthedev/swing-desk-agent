@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as C from '../src/core/commands.js';
 import { evaluate, researchStatus, masterStatus } from '../src/core/rules.js';
-import { markKey } from '../src/core/prepare.js';
-import { LIBRARY_ITEMS } from '../src/core/checklist-library.js';
+import { markKey, deskRecommendation, latestRecommendation } from '../src/core/prepare.js';
+import { LIBRARY_ITEMS, toStrategyItem } from '../src/core/checklist-library.js';
+import { EXCHANGE_KINDS } from '../src/core/evidence.js';
 import { desk, PLAN, readyEvidence, answersFor, prepareAll } from './helpers.js';
 
 const DAY = 86_400_000;
@@ -254,4 +255,149 @@ test('the master list covers every library item with the default window', () => 
   assert.deepEqual(m.window, { bufferDays: 3, expireDays: 5 });
   assert.equal(find(m, 'item:fund-debt').status, 'pass');
   assert.equal(find(m, 'item:fund-growth').status, 'missing');
+});
+
+// ---------- recommendations ----------
+
+const rec = (d, symbol = 'ABC', exchange = 'NSE') => d.store.read((s, now) => deskRecommendation(s, symbol, exchange, now));
+
+/** The owner prepares every core master research item for ABC on NSE. */
+function prepareMaster(d, symbol = 'ABC') {
+  const core = LIBRARY_ITEMS.filter((i) => i.core && i.stage === 'research').map((i) => toStrategyItem(i)).filter((i) => i.type !== 'rule');
+  for (const item of core) {
+    let evidenceId;
+    if (item.type === 'evidence') {
+      const sym = item.scope === 'market' ? 'MARKET' : symbol;
+      const ex = EXCHANGE_KINDS.has(item.kind) ? 'NSE' : undefined;
+      evidenceId = d.owner(C.addEvidence, { kind: item.kind, symbol: sym, summary: 'Prepared', ...(ex ? { exchange: ex } : {}) }).id;
+    }
+    d.owner(C.markPrepared, { symbol, itemId: item.id, exchange: 'NSE', evidenceId, yes: true });
+  }
+}
+
+/** A held lot: master and breakout research done, request approved, shares bought on Monday 26 Oct. */
+function heldLot(d) {
+  prepareMaster(d);
+  prepareAll(d); // Monday 26 Oct
+  readyEvidence(d);
+  const { id } = buy(d);
+  d.owner(C.approveIntent, { id, answers: answersFor(d) });
+  const { lotId } = d.owner(C.recordBuyFill, { intentId: id, qty: 10, price: 100, date: '2026-10-26' });
+  return { id, lotId };
+}
+
+test('wait during buffer: the reason names the ready date', () => {
+  const d = desk();
+  prepareMaster(d);
+  prepareAll(d);
+  d.clock.now -= 2 * DAY; // back inside the wait
+  const r = rec(d);
+  assert.equal(r.call, 'wait');
+  assert.match(r.reasons.join(' '), /2026-10-2\d/);
+  assert.ok(r.strategies.some((s) => s.id === 'breakout' && !s.fits));
+});
+
+test('buy when core master research and a strategy are ready', () => {
+  const d = desk();
+  prepareMaster(d);
+  prepareAll(d);
+  const r = rec(d);
+  assert.equal(r.call, 'buy', r.reasons.join(' | '));
+  assert.ok(r.strategies.find((s) => s.id === 'breakout').fits);
+  assert.deepEqual(r.strategies.find((s) => s.id === 'breakout').missing, []);
+});
+
+test('wait when the strategy is ready but core master research is not', () => {
+  const d = desk();
+  prepareAll(d);
+  const r = rec(d);
+  assert.equal(r.call, 'wait');
+  assert.match(r.reasons.join(' '), /master/i);
+});
+
+test('hold with an open lot', () => {
+  const d = desk();
+  heldLot(d);
+  const r = rec(d);
+  assert.equal(r.call, 'hold', r.reasons.join(' | '));
+  assert.deepEqual(r.recheck, []);
+});
+
+test('sell near stop: 96.2 is under the 96.25 line', () => {
+  const d = desk();
+  heldLot(d);
+  d.owner(C.addEvidence, { kind: 'quote', symbol: 'ABC', exchange: 'NSE', price: 96.2 });
+  const r = rec(d);
+  assert.equal(r.call, 'sell');
+  assert.match(r.reasons.join(' '), /₹96\.20/);
+  assert.doesNotMatch(r.reasons.join(' '), /you should/i);
+});
+
+test('a price above the line does not sell', () => {
+  const d = desk();
+  heldLot(d);
+  d.owner(C.addEvidence, { kind: 'quote', symbol: 'ABC', exchange: 'NSE', price: 96.4 });
+  assert.equal(rec(d).call, 'hold');
+});
+
+test('sell after the planned hold days', () => {
+  const d = desk();
+  heldLot(d);
+  d.clock.now = Date.parse('2026-11-06T05:30:00Z'); // 26 Oct + 10 days = 5 Nov
+  const r = rec(d);
+  assert.equal(r.call, 'sell');
+  assert.match(r.reasons.join(' '), /2026-11-05/);
+});
+
+test('sell when a record the research rested on is corrected', () => {
+  const d = desk();
+  heldLot(d);
+  const mark = d.store.read((s) => Object.values(s.prepared).find((m) => m.evidenceId));
+  d.owner(C.correctEvidence, { corrects: mark.evidenceId, reason: 'Wrong figure', summary: 'Corrected' });
+  const r = rec(d);
+  assert.equal(r.call, 'sell');
+  assert.match(r.reasons.join(' '), /corrected/);
+});
+
+test('sell when a newer record on the same topic says bad', () => {
+  const d = desk();
+  heldLot(d);
+  d.owner(C.addEvidence, { kind: 'news', symbol: 'ABC', summary: 'Probe opened', topic: 'events-legal', verdict: 'bad' });
+  const r = rec(d);
+  assert.equal(r.call, 'sell');
+  assert.match(r.reasons.join(' '), /events-legal/);
+});
+
+test('expired research on a held stock is recheck, not sell', () => {
+  const d = desk();
+  heldLot(d);
+  d.clock.now += 3 * DAY; // 29 Oct: marks of 26 Oct are past their 5 days
+  const r = rec(d);
+  assert.equal(r.call, 'hold', r.reasons.join(' | '));
+  assert.ok(r.recheck.length > 0);
+});
+
+test('agent recommendation is stored with exchange and is not the desk call', () => {
+  const d = desk();
+  const agent = d.addAgent('draft');
+  const { id } = agent.run(C.addRecommendation, { symbol: 'abc', exchange: 'NSE', call: 'sell', strategyIds: ['breakout'], reasons: 'Looks weak', sources: ['https://example.com'] });
+  const stored = d.store.read((s) => s.recommendations.find((x) => x.id === id));
+  assert.equal(stored.exchange, 'NSE');
+  assert.equal(stored.symbol, 'ABC');
+  assert.match(stored.by, /^agent:/);
+  assert.equal(d.store.read((s) => latestRecommendation(s, 'ABC', 'NSE').id), id);
+  assert.equal(d.store.read((s) => latestRecommendation(s, 'ABC', 'BSE')), null);
+  assert.equal(rec(d).call, 'wait');
+  d.owner(C.addRecommendation, { symbol: 'ABC', exchange: 'NSE', call: 'buy', reasons: 'Mine' });
+  assert.equal(d.store.read((s) => latestRecommendation(s, 'ABC', 'NSE').id), id, 'owner entries are not the agent one');
+  assert.equal(d.store.read((s) => s.usage[`agent:${agent.id}`]['2026-10-23'].writes), 1);
+});
+
+test('call outside wait/buy/hold/sell throws', () => {
+  const d = desk();
+  const base = { symbol: 'ABC', exchange: 'NSE', reasons: 'x' };
+  assert.throws(() => d.owner(C.addRecommendation, { ...base, call: 'maybe' }), /wait, buy, hold or sell/);
+  assert.throws(() => d.owner(C.addRecommendation, { ...base, call: 'buy', exchange: undefined }), /NSE or BSE/);
+  assert.throws(() => d.owner(C.addRecommendation, { ...base, call: 'buy', strategyIds: ['nope'] }), /strateg/i);
+  assert.throws(() => d.owner(C.addRecommendation, { ...base, call: 'buy', reasons: 'x'.repeat(4001) }), /4000/);
 });
