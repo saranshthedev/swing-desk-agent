@@ -83,6 +83,10 @@ export const PLAN_DEFAULTS = Object.freeze({
   breakout: { days: 10, buyType: 'mtf', leverage: 2 },
   pullback: { days: 10, buyType: 'mtf', leverage: 2 },
   results: { days: 7, buyType: 'regular' },
+  trend: { days: 30, buyType: 'regular' },
+  'support-bounce': { days: 10, buyType: 'mtf', leverage: 2 },
+  'mean-reversion': { days: 8, buyType: 'regular' },
+  smc: { days: 10, buyType: 'mtf', leverage: 2 },
   default: { days: 10, buyType: 'mtf', leverage: 2 },
 });
 

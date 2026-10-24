@@ -180,6 +180,28 @@ export const CHECKLIST_LIBRARY = Object.freeze([
     ],
   },
   {
+    id: 'smc', title: 'Smart Money Concepts (SMC)',
+    why: 'SMC reads the chart as a trail left by large buyers and sellers: where they stopped price, trapped others and left gaps. Nothing here is a promise that big players are behind a move.',
+    items: [
+      { id: 'smc-htf-bias', label: 'Weekly and daily structure agree on direction (bias is up)', help: 'Take only buy ideas that match the bigger picture. Mixed weekly and daily structure means wait.', how: 'Weekly and daily charts: a series of higher highs and higher lows on both.', check: evResearch('zones') },
+      { id: 'smc-bos', label: 'The last break of structure (BOS) on the daily chart was up', help: 'A break of structure is a close above the last swing high. It shows buyers are in control.', how: 'Daily chart: mark swing highs and lows, find the latest close above a swing high.', check: you },
+      { id: 'smc-choch', label: 'No change of character (CHoCH) against you on the daily chart', help: 'A change of character is the first close below the last higher low in an uptrend. It warns the trend may turn.', how: 'Daily chart, last 2–3 months.', check: you },
+      { id: 'smc-liquidity', label: 'Liquidity pools marked: equal highs or lows, and previous day, week and month highs and lows', help: 'Stops of many traders sit just beyond these levels. Large players often push price to them first.', how: 'Daily and weekly charts: look for two or more highs or lows at nearly the same price.', check: you },
+      { id: 'smc-order-block', label: 'A bullish order block is marked (the last down candle before a strong up-move that broke structure)', help: 'An order block is a zone where large buyers may have placed orders. Mark its high and low.', how: 'Daily chart: find the strong up-move, then the last red candle just before it.', check: you },
+      { id: 'smc-fvg', label: 'Fair value gaps are marked (three-candle gaps price moved through too fast)', help: 'A fair value gap is a thin area where price jumped. Price often comes back to fill part of it.', how: 'Daily chart: find a candle whose range does not overlap the candles on either side.', check: you },
+      { id: 'smc-unmitigated', label: 'The order block is still fresh: price has returned to it at most once', help: 'Each return uses up some of the buying left in the zone. A zone touched many times is weaker.', how: 'Count the returns to the zone on the daily chart.', check: you },
+      { id: 'smc-htf-poi', label: 'The area you will trade from is on the weekly or daily chart, not a smaller timeframe', help: 'Areas from bigger timeframes carry more weight and are less likely to be noise.', how: 'Check which chart the order block or gap was drawn on.', check: you },
+      { id: 'smc-discount', label: 'Entry is in the discount half (below 50%) of the current swing range', help: 'Buy cheap inside the range, not near the top. The 50% line is halfway between the swing low and swing high.', how: 'Draw the Fibonacci tool from swing low to swing high and read the 50% level.', check: you },
+      { id: 'smc-confluence', label: 'The order block overlaps a fair value gap or a demand zone', help: 'Two reasons at the same price make the area stronger than one.', how: 'Compare your marked zones with the weekly and monthly demand zones above.', check: you },
+      { id: 'smc-target-liquidity', label: 'Target is the next liquidity pool or opposing order block', help: 'Price is often drawn to resting stops. Aim for the next pool, and no further.', how: 'Look up from your entry for the nearest equal highs, old high or supply zone.', check: you },
+      { id: 'smc-sweep', label: 'Sell-side liquidity was swept: price dipped below a prior low and closed back above it', help: 'A sweep with a quick recovery suggests sellers were trapped. It is a common sign before a rise.', how: 'Daily chart: a wick below a marked low with a close back above it.', check: ev('candles', 1) },
+      { id: 'smc-displacement', label: 'The move away from the area was strong and fast (large candles, little overlap)', help: 'A sharp move shows real demand. Slow, overlapping candles show nothing special.', how: 'Daily chart: compare candle size with the last 20 candles.', check: you },
+      { id: 'smc-ltf-confirm', label: 'The 1-hour chart shows a change of character up inside the area', help: 'A smaller timeframe turning up inside your zone is the entry signal. Wait for it instead of buying early.', how: 'Switch Kite to 1-hour candles and look inside the zone.', check: you },
+      { id: 'smc-reaction', label: 'A daily candle has closed with a reaction from the area (long lower wick or bullish engulfing)', help: 'Waiting for the close avoids buying a candle that is still falling.', how: 'Daily candle after 3:30 pm.', check: you },
+      { id: 'smc-stop-beyond', label: 'Stop is below the order block low or the sweep low, not inside the zone', help: 'If price closes below the whole zone, the idea is wrong. A stop inside the zone gets hit by normal noise.', how: 'Compare your stop with the marked low.', check: you },
+    ],
+  },
+  {
     id: 'daily', title: 'Daily chart setup',
     why: 'This is where the actual buy signal comes from.',
     items: [
@@ -271,6 +293,7 @@ const RESEARCH_IDS = new Set([
   'events-results', 'events-actions', 'events-legal', 'events-index', 'events-holidays', 'events-economy',
   'zones-monthly-trend', 'zones-weekly-trend', 'zones-monthly-demand', 'zones-monthly-supply', 'zones-weekly-demand',
   'zones-weekly-supply', 'zones-entry-near-demand', 'zones-room-to-target', 'zones-52week', 'zones-weekly-averages', 'zones-gaps',
+  'smc-htf-bias', 'smc-bos', 'smc-choch', 'smc-liquidity', 'smc-order-block', 'smc-fvg', 'smc-unmitigated', 'smc-htf-poi', 'smc-discount', 'smc-confluence', 'smc-target-liquidity',
   'daily-trend', 'daily-levels', 'daily-averages', 'daily-relative',
   'volume-delivery', 'volume-turnover',
   'plan-trigger', 'plan-max-price', 'plan-stop-structure', 'plan-stop-distance', 'plan-target', 'plan-reward', 'plan-time', 'plan-invalid', 'plan-gap',
@@ -278,7 +301,7 @@ const RESEARCH_IDS = new Set([
 ]);
 
 // Checks that rest on exchange data, so the owner can confirm them from the exchange.
-const EXCHANGE_GROUPS = new Set(['zones', 'daily', 'volume']);
+const EXCHANGE_GROUPS = new Set(['zones', 'smc', 'daily', 'volume']);
 const EXCHANGE_EVIDENCE = new Set(['quote', 'candles', 'zones']);
 const EXCHANGE_IDS = new Set(['sector-peers']);
 
