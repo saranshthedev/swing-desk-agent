@@ -6,8 +6,11 @@
 //   check – how the app treats it when added to a strategy:
 //     'you'                                   → you tick it yourself when approving
 //     { evidence, maxAgeDays, scope }          → needs saved evidence (scope 'market' = once for all stocks)
+//                                                Research-stage evidence has no maxAgeDays: it is judged by the strategy’s window.
 //     { rule, value }                          → the app checks the plan’s numbers itself
 //   core  – true: required in the Complete strategy. Others are optional notes there.
+//   exchangeBound – true: only the exchange can show it (price, chart, volume), so the owner sees it as a
+//                   check done on exchange data. Set by group, evidence kind or id (see EXCHANGE_*).
 //
 // Nothing here is advice or a promise of profit. It is a list of things worth looking at.
 
@@ -40,6 +43,7 @@ export const SOURCES = Object.freeze({
 
 const you = 'you';
 const ev = (evidence, maxAgeDays, scope = 'stock') => ({ evidence, maxAgeDays, scope });
+const evResearch = (evidence, scope = 'stock') => ({ evidence, scope }); // research evidence: no age limit of its own
 const rule = (r, value) => ({ rule: r, value });
 
 /** Groups in the order you would normally work through them. */
@@ -112,14 +116,14 @@ export const CHECKLIST_LIBRARY = Object.freeze([
     items: [
       { id: 'flows-fiidii', label: 'FII and DII net buying/selling for recent days', help: 'Heavy foreign selling for many days often weighs on the market.', how: 'NSE FII/DII report.', check: ev('macro', 0, 'market') },
       { id: 'flows-deals', label: 'Bulk or block deals in this stock checked', help: 'A big holder selling in bulk can push the price down.', how: 'NSE bulk and block deals.', check: you },
-      { id: 'flows-holding', label: 'Mutual fund and FII holding trend in this stock', help: 'Rising institutional holding over quarters is a good sign.', how: 'NSE shareholding pattern, last 4 quarters.', check: ev('fundamentals', 120) },
+      { id: 'flows-holding', label: 'Mutual fund and FII holding trend in this stock', help: 'Rising institutional holding over quarters is a good sign.', how: 'NSE shareholding pattern, last 4 quarters.', check: evResearch('fundamentals') },
     ],
   },
   {
     id: 'sector', title: 'Sector and peers',
     why: 'A good stock in a strong sector has the wind behind it.',
     items: [
-      { id: 'sector-strength', label: 'The sector index is stronger than Nifty recently', help: 'Compare the sector’s last 1–3 months with Nifty. Leaders often keep leading.', how: 'Kite: compare the sector index (e.g. NIFTY IT) with NIFTY 50.', check: ev('sector', 3), core: true },
+      { id: 'sector-strength', label: 'The sector index is stronger than Nifty recently', help: 'Compare the sector’s last 1–3 months with Nifty. Leaders often keep leading.', how: 'Kite: compare the sector index (e.g. NIFTY IT) with NIFTY 50.', check: evResearch('sector'), core: true },
       { id: 'sector-trend', label: 'The sector index is not falling on the weekly chart', help: 'Buying a stock while its whole sector falls is swimming against the tide.', how: 'Weekly chart of the sector index.', check: you },
       { id: 'sector-peers', label: 'This stock is stronger than its main peers', help: 'Pick the leader, not the laggard.', how: 'Compare 2–3 similar companies’ charts.', check: you, core: true },
       { id: 'sector-peer-results', label: 'Recent results of peers were not bad', help: 'Bad results at a peer can hit the whole sector.', how: 'Peers’ latest results on NSE.', check: you },
@@ -131,13 +135,13 @@ export const CHECKLIST_LIBRARY = Object.freeze([
     id: 'fundamentals', title: 'Company fundamentals',
     why: 'A healthy business is less likely to collapse while you hold it.',
     items: [
-      { id: 'fund-growth', label: 'Sales and profit are growing (last 3 years and recent quarters)', help: 'Steady growth is a good sign. Falling profit needs a reason.', how: 'Company results on NSE; annual report.', check: ev('fundamentals', 120), core: true },
+      { id: 'fund-growth', label: 'Sales and profit are growing (last 3 years and recent quarters)', help: 'Steady growth is a good sign. Falling profit needs a reason.', how: 'Company results on NSE; annual report.', check: evResearch('fundamentals'), core: true },
       { id: 'fund-margins', label: 'Profit margins are stable or improving', help: 'Shrinking margins mean costs are rising faster than prices.', how: 'Operating margin in the last 4–8 quarterly results.', check: you },
       { id: 'fund-returns', label: 'Return on capital is decent (ROE / ROCE)', help: 'Shows how well the company uses money. Above about 15% is usually good.', how: 'Annual report or results.', check: you },
       { id: 'fund-debt', label: 'Debt is under control', help: 'High debt is dangerous when rates rise or business slows. Check debt-to-equity and interest cover.', how: 'Balance sheet in results or annual report.', check: you, core: true },
       { id: 'fund-cash', label: 'Cash from operations supports the reported profit', help: 'Profit on paper with no cash coming in can be a warning.', how: 'Cash flow statement in the annual report.', check: you },
       { id: 'fund-valuation', label: 'Valuation is not extreme compared with peers and its own history', help: 'Very high P/E can fall fast on small disappointments.', how: 'P/E and P/B vs 2–3 peers.', check: you },
-      { id: 'fund-promoter', label: 'Promoter holding is stable and not heavily pledged', help: 'Promoters selling or pledging many shares can be a red flag.', how: 'NSE shareholding pattern and pledge data.', check: ev('fundamentals', 120), core: true },
+      { id: 'fund-promoter', label: 'Promoter holding is stable and not heavily pledged', help: 'Promoters selling or pledging many shares can be a red flag.', how: 'NSE shareholding pattern and pledge data.', check: evResearch('fundamentals'), core: true },
       { id: 'fund-governance', label: 'No audit warnings, auditor resignation or governance issues', help: 'These can lead to sudden large falls.', how: 'Annual report; NSE announcements.', check: you, core: true },
       { id: 'fund-dilution', label: 'No big share issue (QIP, rights, warrants) planned', help: 'New shares can push the price down.', how: 'NSE announcements and board meetings.', check: you },
       { id: 'fund-rating', label: 'No credit rating downgrade recently', help: 'A downgrade means lenders see more risk.', how: 'NSE announcements (credit rating).', check: you },
@@ -149,7 +153,7 @@ export const CHECKLIST_LIBRARY = Object.freeze([
     id: 'events', title: 'Company events and dates',
     why: 'Known dates can cause sudden big moves. Decide your rule before they happen.',
     items: [
-      { id: 'events-results', label: 'No results date inside the planned hold (or you have a rule for it)', help: 'Prices can jump or crash on results day.', how: 'NSE board meetings.', check: ev('calendar', 5), core: true },
+      { id: 'events-results', label: 'No results date inside the planned hold (or you have a rule for it)', help: 'Prices can jump or crash on results day.', how: 'NSE board meetings.', check: evResearch('calendar'), core: true },
       { id: 'events-news', label: 'Company news and announcements read today', help: 'Look for orders, legal cases, management changes, or anything unusual.', how: 'NSE corporate announcements.', check: ev('news', 0), core: true },
       { id: 'events-actions', label: 'Dividend, bonus, split or buyback dates known', help: 'Prices adjust on these dates. Your stop and target may need to change.', how: 'NSE company actions.', check: you },
       { id: 'events-legal', label: 'No big court case, regulator (SEBI) action or tax demand', help: 'These can hit the price without warning.', how: 'NSE announcements and news.', check: you },
@@ -162,8 +166,8 @@ export const CHECKLIST_LIBRARY = Object.freeze([
     id: 'zones', title: 'Weekly and monthly chart: demand and supply zones',
     why: 'Higher timeframes show where big buyers and sellers acted before. Prices often react there again.',
     items: [
-      { id: 'zones-monthly-trend', label: 'Monthly chart trend is up or sideways, not down', help: 'Trade in the direction of the bigger picture.', how: 'Kite chart, monthly candles, last 3–5 years.', check: ev('zones', 5), core: true },
-      { id: 'zones-weekly-trend', label: 'Weekly chart trend is up (higher highs and higher lows)', help: 'The weekly trend is the main direction for a swing trade.', how: 'Kite chart, weekly candles, last 1–2 years.', check: ev('zones', 5), core: true },
+      { id: 'zones-monthly-trend', label: 'Monthly chart trend is up or sideways, not down', help: 'Trade in the direction of the bigger picture.', how: 'Kite chart, monthly candles, last 3–5 years.', check: evResearch('zones'), core: true },
+      { id: 'zones-weekly-trend', label: 'Weekly chart trend is up (higher highs and higher lows)', help: 'The weekly trend is the main direction for a swing trade.', how: 'Kite chart, weekly candles, last 1–2 years.', check: evResearch('zones'), core: true },
       { id: 'zones-monthly-demand', label: 'Monthly demand zones marked', help: 'A demand zone is a price area where the stock rose sharply before. Buyers may return there.', how: 'Find the base just before a strong up-move on monthly candles. Mark its high and low.', check: you },
       { id: 'zones-monthly-supply', label: 'Monthly supply zones marked', help: 'A supply zone is a price area where the stock fell sharply before. Sellers may return there.', how: 'Find the base just before a strong down-move on monthly candles.', check: you },
       { id: 'zones-weekly-demand', label: 'Weekly demand zones marked', help: 'Closer, more detailed buyer areas than monthly zones.', how: 'Same method on weekly candles.', check: you, core: true },
@@ -245,14 +249,16 @@ export const CHECKLIST_LIBRARY = Object.freeze([
 
 /**
  * Two stages:
- *   research – can be done 1–5 days before the trade (answers stay valid for RESEARCH_VALID_DAYS)
+ *   research – done in the days before the trade; each strategy sets how many days it must wait
+ *              (bufferDays) and how long it stays good (expireDays), within WINDOW
  *   before   – must be checked on the day, just before buying
  */
 export const STAGES = Object.freeze({
-  research: { title: 'Research (1–5 days before)', about: 'Do these calmly in the days before. Your answers stay valid for 5 days.' },
+  research: { title: 'Research (days before)', about: 'Do these calmly in the days before. Each strategy says how many days they must wait and how long they stay good.' },
   before: { title: 'Just before buying (today)', about: 'Check these on the day, right before you place the order.' },
 });
-export const RESEARCH_VALID_DAYS = 5;
+/** Limits for a strategy’s research window, in India calendar days. */
+export const WINDOW = Object.freeze({ minBuffer: 3, maxExpire: 21, defaultBuffer: 3, defaultExpire: 5 });
 
 const RESEARCH_IDS = new Set([
   'currency-exposure', 'currency-debt', 'currency-rbi',
@@ -271,14 +277,22 @@ const RESEARCH_IDS = new Set([
   'money-regular-for-events',
 ]);
 
-/** All sub-items with their group id and stage, in order. */
-export const LIBRARY_ITEMS = CHECKLIST_LIBRARY.flatMap((g) => g.items.map((i) => ({ ...i, group: g.id, stage: RESEARCH_IDS.has(i.id) ? 'research' : 'before' })));
+// Checks that rest on exchange data, so the owner can confirm them from the exchange.
+const EXCHANGE_GROUPS = new Set(['zones', 'daily', 'volume']);
+const EXCHANGE_EVIDENCE = new Set(['quote', 'candles', 'zones']);
+const EXCHANGE_IDS = new Set(['sector-peers']);
+
+/** All sub-items with their group id, stage and exchangeBound flag, in order. */
+export const LIBRARY_ITEMS = CHECKLIST_LIBRARY.flatMap((g) => g.items.map((i) => ({
+  ...i, group: g.id, stage: RESEARCH_IDS.has(i.id) ? 'research' : 'before',
+  exchangeBound: EXCHANGE_GROUPS.has(g.id) || EXCHANGE_IDS.has(i.id) || EXCHANGE_EVIDENCE.has(i.check.evidence),
+})));
 
 /** Turn a library sub-item into a strategy checklist item. */
 export function toStrategyItem(libItem, { required = true } = {}) {
-  const base = { id: libItem.id, group: libItem.group, stage: libItem.stage, label: libItem.label, help: libItem.help, required };
+  const base = { id: libItem.id, group: libItem.group, stage: libItem.stage, label: libItem.label, help: libItem.help, required, exchangeBound: libItem.exchangeBound };
   if (libItem.check === 'you') return { ...base, type: 'attest' };
-  if (libItem.check.evidence) return { ...base, type: 'evidence', kind: libItem.check.evidence, maxAgeDays: libItem.check.maxAgeDays, scope: libItem.check.scope };
+  if (libItem.check.evidence) return { ...base, type: 'evidence', kind: libItem.check.evidence, ...(libItem.check.maxAgeDays !== undefined ? { maxAgeDays: libItem.check.maxAgeDays } : {}), scope: libItem.check.scope };
   return { ...base, type: 'rule', rule: libItem.check.rule, value: libItem.check.value };
 }
 

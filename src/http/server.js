@@ -14,7 +14,7 @@ import { scheduleTick } from '../core/schedule.js';
 import { SETTING_RULES, UserError } from '../core/settings.js';
 import { EVIDENCE_KINDS } from '../core/evidence.js';
 import { RULES } from '../core/strategies.js';
-import { LIBRARY_GROUPS, SOURCES, STAGES, RESEARCH_VALID_DAYS, MARKET } from '../core/checklist-library.js';
+import { LIBRARY_GROUPS, SOURCES, STAGES, WINDOW, MARKET } from '../core/checklist-library.js';
 import { researchStatus } from '../core/rules.js';
 import { RISK_PRESETS, AGENT_PRESETS, PLAYBOOK_TEMPLATES, PLAN_DEFAULTS, matchRiskPreset } from '../core/presets.js';
 import { newId } from '../store/store.js';
@@ -94,7 +94,7 @@ export function stateView(store) {
       settingRules: SETTING_RULES,
       evidenceKinds: EVIDENCE_KINDS,
       ruleKinds: Object.keys(RULES),
-      checklist: { groups: LIBRARY_GROUPS, sources: SOURCES, stages: STAGES, researchValidDays: RESEARCH_VALID_DAYS, market: MARKET },
+      checklist: { groups: LIBRARY_GROUPS, sources: SOURCES, stages: STAGES, researchValidDays: WINDOW.defaultExpire, market: MARKET },
       presets: {
         risk: RISK_PRESETS,
         currentRisk: matchRiskPreset(s.settings),

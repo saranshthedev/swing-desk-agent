@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as C from '../src/core/commands.js';
 import { evaluate, researchStatus } from '../src/core/rules.js';
-import { CHECKLIST_LIBRARY, LIBRARY_ITEMS, SOURCES } from '../src/core/checklist-library.js';
-import { BUILTIN_STRATEGIES, validateStrategy } from '../src/core/strategies.js';
+import { CHECKLIST_LIBRARY, LIBRARY_ITEMS, SOURCES, WINDOW } from '../src/core/checklist-library.js';
+import { BUILTIN_STRATEGIES, validateStrategy, strategyWindow, isExchangeBound, hasRequiredResearch } from '../src/core/strategies.js';
 import { EVIDENCE_KINDS } from '../src/core/evidence.js';
 import { createHandler } from '../src/mcp/server.js';
 import { desk, PLAN, readyEvidence } from './helpers.js';
@@ -89,4 +89,74 @@ test('agents can read the library and a stock’s research status, but cannot an
   assert.ok(r.checks.some((c) => c.stage === 'research') && r.checks.some((c) => c.stage === 'before'));
   const names = handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' }).result.tools.map((t) => t.name);
   assert.ok(!names.some((n) => /research_save|answer/.test(n)));
+});
+
+const attestItem = (id, stage, required = true) => ({ id, stage, type: 'attest', label: id, required });
+const strat = (extra = {}) => ({ id: 'tmp', name: 'Tmp', items: [attestItem('a', 'research'), attestItem('b', 'before')], ...extra });
+
+test('window limits are enforced', () => {
+  assert.deepEqual(WINDOW, { minBuffer: 3, maxExpire: 21, defaultBuffer: 3, defaultExpire: 5 });
+  assert.throws(() => validateStrategy(strat({ bufferDays: 2 })), /at least 3/);
+  assert.throws(() => validateStrategy(strat({ expireDays: 22 })), /at most 21/);
+  assert.throws(() => validateStrategy(strat({ bufferDays: 6, expireDays: 5 })), /expire.*at least.*buffer/i);
+  const tight = validateStrategy(strat({ bufferDays: 3, expireDays: 3 }));
+  assert.equal(tight.bufferDays, 3);
+  assert.equal(tight.expireDays, 3);
+  const plain = validateStrategy(strat());
+  assert.equal(plain.bufferDays, 3);
+  assert.equal(plain.expireDays, 5);
+});
+
+test('a strategy needs a required research item', () => {
+  const allBefore = [attestItem('a', 'before'), attestItem('b', 'before')];
+  assert.throws(() => validateStrategy(strat({ items: allBefore })), /required research item/);
+  assert.throws(() => validateStrategy(strat({ items: [attestItem('a', 'research', false), attestItem('b', 'before')] })), /required research item/);
+  const ruleOnly = { id: 'r', stage: 'research', type: 'rule', rule: 'maxDays', value: 10, label: 'x', required: true };
+  assert.throws(() => validateStrategy(strat({ items: [ruleOnly, attestItem('b', 'before')] })), /required research item/);
+  assert.doesNotThrow(() => validateStrategy(strat({ items: [attestItem('a', 'research'), attestItem('b', 'before')] })));
+  assert.equal(hasRequiredResearch({ items: allBefore }), false);
+  assert.equal(hasRequiredResearch({ items: [attestItem('a', 'research')] }), true);
+});
+
+test('exchange-bound defaults', () => {
+  const by = (id) => LIBRARY_ITEMS.find((i) => i.id === id).exchangeBound;
+  for (const id of ['zones-weekly-demand', 'daily-trend', 'volume-delivery', 'sector-peers']) assert.equal(by(id), true, id);
+  for (const id of ['sector-strength', 'sector-trend', 'fund-promoter', 'events-news']) assert.equal(by(id), false, id);
+  assert.equal(isExchangeBound({ id: 'sector-trend', exchangeBound: true }), true);
+  assert.equal(isExchangeBound({ id: 'daily-trend', exchangeBound: false }), false);
+  assert.equal(isExchangeBound({ id: 'my-own-item' }), false);
+  const kept = validateStrategy(strat({ items: [{ ...attestItem('a', 'research'), exchangeBound: true }, attestItem('b', 'before')] }));
+  assert.equal(kept.items[0].exchangeBound, true);
+  assert.ok(!('exchangeBound' in kept.items[1]));
+});
+
+test('research evidence has no age limit', () => {
+  const research = BUILTIN_STRATEGIES.flatMap((s) => s.items).filter((i) => i.stage === 'research' && i.type === 'evidence');
+  assert.ok(research.length > 0);
+  for (const i of research) assert.ok(!('maxAgeDays' in i) || i.maxAgeDays === undefined, i.id);
+  const research2 = (extra) => ({ id: 'e', stage: 'research', type: 'evidence', kind: 'sector', scope: 'stock', label: 'e', required: true, ...extra });
+  const cleaned = validateStrategy(strat({ items: [research2({ maxAgeDays: 4 })] }));
+  assert.ok(!('maxAgeDays' in cleaned.items[0]));
+  const day = (extra) => ({ ...research2(extra), id: 'd', stage: 'before' });
+  assert.throws(() => validateStrategy(strat({ items: [attestItem('a', 'research'), day({})] })), /freshness/);
+  assert.throws(() => validateStrategy(strat({ items: [attestItem('a', 'research'), day({ maxAgeDays: 401 })] })), /freshness/);
+  assert.equal(validateStrategy(strat({ items: [attestItem('a', 'research'), day({ maxAgeDays: 400 })] })).items[1].maxAgeDays, 400);
+});
+
+test('built-ins validate and were bumped', () => {
+  const version = Object.fromEntries(BUILTIN_STRATEGIES.map((s) => [s.id, s.version]));
+  assert.deepEqual(version, { breakout: 3, pullback: 3, results: 3, complete: 2 });
+  for (const s of BUILTIN_STRATEGIES) {
+    assert.doesNotThrow(() => validateStrategy(s), s.id);
+    assert.ok(hasRequiredResearch(s), s.id);
+    assert.deepEqual(strategyWindow(s), { bufferDays: 3, expireDays: 5 }, s.id);
+    assert.equal(s.bufferDays, 3);
+    assert.equal(s.expireDays, 5);
+  }
+});
+
+test('old saved strategy falls back', () => {
+  assert.deepEqual(strategyWindow({ items: [] }), { bufferDays: 3, expireDays: 5 });
+  assert.deepEqual(strategyWindow({ bufferDays: 4, expireDays: 9, items: [] }), { bufferDays: 4, expireDays: 9 });
+  assert.equal(isExchangeBound({ id: 'daily-trend' }), true);
 });

@@ -6,7 +6,7 @@ import { deskStatus, intentView, lotView, previewPlan, recentFirst, intentStatus
 import { EVIDENCE_KINDS } from '../core/evidence.js';
 import { SETTING_RULES, UserError } from '../core/settings.js';
 import { indiaDate } from '../core/time.js';
-import { LIBRARY_GROUPS, SOURCES, STAGES, RESEARCH_VALID_DAYS, MARKET } from '../core/checklist-library.js';
+import { LIBRARY_GROUPS, SOURCES, STAGES, WINDOW, MARKET } from '../core/checklist-library.js';
 import { researchStatus } from '../core/rules.js';
 
 const LEVEL = { off: 0, read: 1, draft: 2, propose: 3 };
@@ -62,7 +62,7 @@ export const TOOLS = {
     level: 'read',
     description: 'The full pre-trade checklist library: groups and sub-items with plain-language help, where to check (free sources), and the stage: “research” (can be done 1–5 days before) or “before” (on the day, just before buying). Use it to plan your research and the evidence you save.',
     inputSchema: obj(),
-    run: () => ({ stages: STAGES, researchValidDays: RESEARCH_VALID_DAYS, marketSymbol: MARKET, groups: LIBRARY_GROUPS, sources: SOURCES }),
+    run: () => ({ stages: STAGES, researchValidDays: WINDOW.defaultExpire, marketSymbol: MARKET, groups: LIBRARY_GROUPS, sources: SOURCES }),
   },
 
   get_research_status: {

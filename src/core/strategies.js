@@ -3,19 +3,24 @@
 // Item types:
 //   attest   – the owner answers yes at approval. Agents may add a claim; it is shown as not verified.
 //   evidence – needs evidence of `kind` observed within `maxAgeDays` India days (0 = today), for the
-//              stock, or with scope 'market' saved once under MARKET for every stock.
-//   rule     – a fixed numeric check on the plan. Rules only add to the global limits, never relax them.
+//              stock, or with scope 'market' saved once under MARKET for every stock. Research-stage
+//              evidence has no `maxAgeDays`: it is judged by the strategy’s research window instead.
+//   rule    – a fixed numeric check on the plan. Rules only add to the global limits, never relax them.
 // Items can carry a `group` (a checklist-library group id or your own) to show them as sub-items;
 // a group is done only when all its required sub-items pass. Each item also has a `stage`:
-// 'research' (can be answered 1–5 days ahead on the Prepare page) or 'before' (on the day).
+// 'research' (answered in the days ahead on the Prepare page) or 'before' (on the day).
+// Each strategy has a research window: `bufferDays` (research must be at least this old) and
+// `expireDays` (older research no longer counts); limits are WINDOW in checklist-library.js.
+// Items may carry `exchangeBound` (true: rests on exchange data); if absent the library default applies.
+// A strategy must have at least one required research item (a “you answer” or evidence item).
 //
 // The built-in strategies are starting templates, not recommendations or proof of an edge.
 // Saving a strategy bumps its version; a request made against an older version cannot be approved.
-// Built-ins are at version 2 since they gained grouped checklists from the library.
+// Built-ins are at version 3 (Complete: 2) since they gained the research window and exchange flags.
 
 import { UserError } from './settings.js';
 import { EVIDENCE_KINDS } from './evidence.js';
-import { LIBRARY_ITEMS, toStrategyItem } from './checklist-library.js';
+import { LIBRARY_ITEMS, WINDOW, toStrategyItem } from './checklist-library.js';
 
 export const RULES = {
   minRewardRisk: { label: (v) => `Gain is at least ${v}× the risk`, valid: (v) => Number.isFinite(v) && v > 0 && v <= 20 },
@@ -45,28 +50,28 @@ const SHARED_END = ['order-details', 'order-protect', 'mind-calm'];
 
 export const BUILTIN_STRATEGIES = Object.freeze([
   {
-    id: 'breakout', name: 'Breakout from a base', version: 2, builtin: true, enabled: true,
+    id: 'breakout', name: 'Breakout from a base', version: 3, builtin: true, enabled: true, bufferDays: 3, expireDays: 5,
     description: 'Price closes above a recent high after a quiet period, with strong volume.',
     items: [
       ...lib(SHARED_TOP),
       ...lib(['sector-strength', 'sector-concentration']),
       ...lib(SHARED_SAFETY),
       ...lib(['zones-weekly-trend', 'zones-weekly-supply', 'zones-room-to-target']),
-      own('breakout-close', 'daily', 'evidence', 'Daily close above the 20-day high', { kind: 'candles', maxAgeDays: 1, scope: 'stock', help: 'Check the last daily candle in Kite or your chart.' }),
+      own('breakout-close', 'daily', 'evidence', 'Daily close above the 20-day high', { kind: 'candles', maxAgeDays: 1, scope: 'stock', exchangeBound: true, help: 'Check the last daily candle in Kite or your chart.' }),
       ...lib(['daily-close', 'volume-signal', ...SHARED_LIQUIDITY]),
       ...lib(['plan-max-price', 'plan-stop-structure', 'plan-stop-distance', 'plan-reward', 'plan-invalid']),
       ...lib(SHARED_END),
     ],
   },
   {
-    id: 'pullback', name: 'Pullback in an uptrend', version: 2, builtin: true, enabled: true,
+    id: 'pullback', name: 'Pullback in an uptrend', version: 3, builtin: true, enabled: true, bufferDays: 3, expireDays: 5,
     description: 'A rising stock dips to its 20-day average on lighter volume, then turns up.',
     items: [
       ...lib(SHARED_TOP),
       ...lib(['sector-strength', 'sector-concentration']),
       ...lib(SHARED_SAFETY),
       ...lib(['zones-weekly-trend', 'zones-weekly-demand', 'zones-entry-near-demand', 'zones-room-to-target']),
-      own('pullback-trend', 'daily', 'evidence', 'Price above a rising 50-day average', { kind: 'candles', maxAgeDays: 5, scope: 'stock', stage: 'research' }),
+      own('pullback-trend', 'daily', 'evidence', 'Price above a rising 50-day average', { kind: 'candles', scope: 'stock', stage: 'research', exchangeBound: true }),
       own('pullback-dip', 'daily', 'attest', 'The dip happened on lower volume than the rise', { help: 'Quiet selling means sellers are not in control.' }),
       own('pullback-turn', 'daily', 'attest', 'A daily candle has closed back up from the 20-day average', { help: 'Wait for proof that buyers returned.' }),
       ...lib(SHARED_LIQUIDITY),
@@ -75,7 +80,7 @@ export const BUILTIN_STRATEGIES = Object.freeze([
     ],
   },
   {
-    id: 'results', name: 'After-results momentum', version: 2, builtin: true, enabled: true,
+    id: 'results', name: 'After-results momentum', version: 3, builtin: true, enabled: true, bufferDays: 3, expireDays: 5,
     description: 'A strong move after results that holds. Event-driven, so no borrowing.',
     items: [
       ...lib(['market-nifty-trend', 'market-vix', 'global-us', 'global-news']),
@@ -90,11 +95,26 @@ export const BUILTIN_STRATEGIES = Object.freeze([
     ],
   },
   {
-    id: 'complete', name: 'Complete pre-trade checklist', version: 1, builtin: true, enabled: true,
+    id: 'complete', name: 'Complete pre-trade checklist', version: 2, builtin: true, enabled: true, bufferDays: 3, expireDays: 5,
     description: 'Every check in the library. Core checks are required; the rest are optional notes. Use it as a full review, or copy it and trim.',
     items: LIBRARY_ITEMS.filter((i) => i.id !== 'money-regular-for-events').map((i) => toStrategyItem(i, { required: !!i.core })),
   },
 ]);
+
+/** A strategy’s research window; strategies saved before windows existed get the defaults. */
+export function strategyWindow(strategy) {
+  return { bufferDays: strategy?.bufferDays ?? WINDOW.defaultBuffer, expireDays: strategy?.expireDays ?? WINDOW.defaultExpire };
+}
+
+/** Whether an item rests on exchange data: its own flag, else the library default, else false. */
+export function isExchangeBound(item) {
+  return item.exchangeBound ?? LIBRARY_ITEMS.find((i) => i.id === item.id)?.exchangeBound ?? false;
+}
+
+/** True when the strategy has a required research item the owner can prepare ahead (not a plan rule). */
+export function hasRequiredResearch(strategy) {
+  return strategy.items.some((i) => i.stage === 'research' && i.required && (i.type === 'attest' || i.type === 'evidence'));
+}
 
 /** Validate an owner-edited strategy. Returns the cleaned strategy (without version). */
 export function validateStrategy(input) {
@@ -117,14 +137,16 @@ export function validateStrategy(input) {
     if (group && !ID.test(group)) throw new UserError(`Item ${i + 1}: group must be lower-case letters, digits and dashes.`);
     const stage = raw.stage ?? 'before';
     if (!['research', 'before'].includes(stage)) throw new UserError(`Item ${i + 1}: stage must be research or before.`);
-    const common = { id: itemId, ...(group ? { group } : {}), stage, help: str(raw.help, 'Help', 500, false) };
+    const common = { id: itemId, ...(group ? { group } : {}), stage, ...(typeof raw.exchangeBound === 'boolean' ? { exchangeBound: raw.exchangeBound } : {}), help: str(raw.help, 'Help', 500, false) };
     if (raw.type === 'attest') return { ...common, type: 'attest', label: str(raw.label, `Item ${i + 1}`, 200), required };
     if (raw.type === 'evidence') {
       if (!EVIDENCE_KINDS[raw.kind]) throw new UserError(`Item ${i + 1}: evidence kind must be one of ${Object.keys(EVIDENCE_KINDS).join(', ')}.`);
-      if (!Number.isInteger(raw.maxAgeDays) || raw.maxAgeDays < 0 || raw.maxAgeDays > 400) throw new UserError(`Item ${i + 1}: freshness must be 0 (today) to 400 days.`);
+      // Research evidence is judged by the strategy window, so it keeps no age of its own.
+      const dated = stage === 'research' ? {} : { maxAgeDays: raw.maxAgeDays };
+      if (stage !== 'research' && (!Number.isInteger(raw.maxAgeDays) || raw.maxAgeDays < 0 || raw.maxAgeDays > 400)) throw new UserError(`Item ${i + 1}: freshness must be 0 (today) to 400 days.`);
       const scope = raw.scope ?? 'stock';
       if (!['stock', 'market'].includes(scope)) throw new UserError(`Item ${i + 1}: scope must be stock or market.`);
-      return { ...common, type: 'evidence', label: str(raw.label, `Item ${i + 1}`, 200), kind: raw.kind, maxAgeDays: raw.maxAgeDays, scope, required };
+      return { ...common, type: 'evidence', label: str(raw.label, `Item ${i + 1}`, 200), kind: raw.kind, ...dated, scope, required };
     }
     if (raw.type === 'rule') {
       const def = RULES[raw.rule];
@@ -133,11 +155,20 @@ export function validateStrategy(input) {
     }
     throw new UserError(`Item ${i + 1}: type must be attest, evidence or rule.`);
   });
+  const bufferDays = input.bufferDays ?? WINDOW.defaultBuffer;
+  const expireDays = input.expireDays ?? WINDOW.defaultExpire;
+  if (!Number.isInteger(bufferDays) || !Number.isInteger(expireDays)) throw new UserError('Buffer and expire must be whole numbers of days.');
+  if (bufferDays < WINDOW.minBuffer) throw new UserError(`Buffer must be at least ${WINDOW.minBuffer} days.`);
+  if (expireDays > WINDOW.maxExpire) throw new UserError(`Expire must be at most ${WINDOW.maxExpire} days.`);
+  if (expireDays < bufferDays) throw new UserError('Expire days must be at least the buffer days.');
+  if (!hasRequiredResearch({ items })) throw new UserError('Add at least one required research item that you can prepare days ahead (a “you answer” or evidence item, not a plan rule).');
   return {
     id,
     name: str(input.name, 'Name', 80),
     description: str(input.description, 'Description', 500, false),
     enabled: input.enabled !== false,
+    bufferDays,
+    expireDays,
     items,
   };
 }

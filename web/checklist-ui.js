@@ -87,9 +87,9 @@ const stageOf = (i) => i.stage ?? 'before';
 
 /** Library sub-item → strategy checklist item (mirrors src/core/checklist-library.js). */
 export function toStrategyItem(i, group) {
-  const base = { id: i.id, group, stage: i.stage ?? 'before', label: i.label, help: i.help, required: true };
+  const base = { id: i.id, group, stage: i.stage ?? 'before', label: i.label, help: i.help, required: true, exchangeBound: i.exchangeBound };
   if (i.check === 'you') return { ...base, type: 'attest' };
-  if (i.check.evidence) return { ...base, type: 'evidence', kind: i.check.evidence, maxAgeDays: i.check.maxAgeDays, scope: i.check.scope };
+  if (i.check.evidence) return { ...base, type: 'evidence', kind: i.check.evidence, ...(i.check.maxAgeDays !== undefined ? { maxAgeDays: i.check.maxAgeDays } : {}), scope: i.check.scope };
   return { ...base, type: 'rule', rule: i.check.rule, value: i.check.value };
 }
 

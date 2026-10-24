@@ -5,7 +5,7 @@ import { estimateCosts, fundingLabel } from './fees.js';
 import { sizePlan } from './sizing.js';
 import { FIXED } from './settings.js';
 import { daysBetween, indiaDate, indiaWeekStart } from './time.js';
-import { MARKET, RESEARCH_VALID_DAYS } from './checklist-library.js';
+import { MARKET, WINDOW } from './checklist-library.js';
 
 const money = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
@@ -113,7 +113,7 @@ export function researchFor(state, symbol, strategy, now) {
   const saved = state.research[`${symbol}|${strategy.id}`];
   if (!saved || saved.version !== strategy.version) return {};
   const today = indiaDate(now);
-  return Object.fromEntries(Object.entries(saved.items).filter(([, at]) => daysBetween(indiaDate(Date.parse(at)), today) <= RESEARCH_VALID_DAYS));
+  return Object.fromEntries(Object.entries(saved.items).filter(([, at]) => daysBetween(indiaDate(Date.parse(at)), today) <= WINDOW.defaultExpire));
 }
 
 /**
@@ -127,7 +127,7 @@ export function itemCheck(state, item, ctx) {
   if (item.type === 'attest') {
     if (ctx.answers?.[item.id] === true) return done('pass', 'You ticked this now.');
     const researchedAt = meta.stage === 'research' ? ctx.research?.[item.id] : null;
-    if (researchedAt) return done('pass', `You checked this in research on ${indiaDate(Date.parse(researchedAt))}. Valid for ${RESEARCH_VALID_DAYS} days.`);
+    if (researchedAt) return done('pass', `You checked this in research on ${indiaDate(Date.parse(researchedAt))}. Valid for ${WINDOW.defaultExpire} days.`);
     const claim = ctx.claims?.[item.id];
     return done('ask', claim ? `Agent says (not verified): ${claim}` : (item.help || 'Tick this yourself.'));
   }
@@ -135,8 +135,9 @@ export function itemCheck(state, item, ctx) {
     const market = item.scope === 'market';
     const ev = latestEvidence(state, item.kind, market ? MARKET : ctx.symbol);
     const age = ev ? daysBetween(indiaDate(Date.parse(ev.observedAt)), today) : Infinity;
-    if (ev && age <= item.maxAgeDays) return done('pass', `${ev.by === 'owner' ? 'You' : 'Agent (not verified)'}${market ? ' · market-wide' : ''}: ${(ev.summary || '').slice(0, 140)}`);
-    return done('stale', `Needs “${item.kind}” evidence${market ? ` saved under ${MARKET}` : ''} from ${item.maxAgeDays === 0 ? 'today' : `the last ${item.maxAgeDays} day(s)`}.`);
+    const maxAge = item.maxAgeDays ?? WINDOW.defaultExpire; // research evidence has no age of its own
+    if (ev && age <= maxAge) return done('pass', `${ev.by === 'owner' ? 'You' : 'Agent (not verified)'}${market ? ' · market-wide' : ''}: ${(ev.summary || '').slice(0, 140)}`);
+    return done('stale', `Needs “${item.kind}” evidence${market ? ` saved under ${MARKET}` : ''} from ${maxAge === 0 ? 'today' : `the last ${maxAge} day(s)`}.`);
   }
   if (!ctx.plan) return done('info', 'Checked automatically when you make the plan.');
   const pass = {
