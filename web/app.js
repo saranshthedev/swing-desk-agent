@@ -612,7 +612,7 @@ function correctForm(e) {
     : field('Corrected text', `<textarea name="summary" rows="3" required>${esc(e.summary)}</textarea>`);
   return `<details class="correct"><summary class="btn">Correct</summary><form class="form" data-form="correct" data-id="${esc(e.id)}">
     <p class="small muted">The old record stays in the history, marked corrected, and stops counting. Research you prepared with it must be prepared again, and its wait starts again.</p>
-    ${value}${e.exchange ? field('Exchange', exchangeSelect(e.exchange)) : ''}
+    ${value}${e.exchange ? field('Exchange', exchangeSelect(e.exchange)) : PRICE_KINDS.has(e.kind) ? field('Exchange', `<select name="exchange" required><option value="">Choose NSE or BSE</option><option>NSE</option><option>BSE</option></select>`, 'This older record has no exchange. Say which one its numbers came from.') : ''}
     ${NEEDS_CONFIRM.has(e.kind) ? '' : field('Good until (optional)', '<input name="goodUntil" type="date">', 'Blank: the desk picks by kind.')}
     ${field('Why it was wrong', '<input name="reason" required maxlength="500">')}
     <button class="btn primary">Save correction</button></form></details>`;

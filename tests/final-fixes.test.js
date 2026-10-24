@@ -33,6 +33,16 @@ test('a legacy price record cannot back marks on NSE and BSE', () => {
   }
 });
 
+test('a legacy price record can be corrected with an exchange and then backs a mark on that exchange only', () => {
+  const d = desk();
+  const old = legacy(d, 'owner');
+  assert.throws(() => d.owner(C.correctEvidence, { corrects: old, reason: 'no exchange', summary: 'old chart' }), /NSE or BSE/);
+  const { id } = d.owner(C.correctEvidence, { corrects: old, reason: 'Chart was from NSE', summary: 'old chart', exchange: 'NSE' });
+  const mark = (exchange) => () => d.owner(C.markPrepared, { symbol: 'ABC', strategyId: 'pullback', itemId: 'pullback-trend', exchange, evidenceId: id, yes: true });
+  assert.doesNotThrow(mark('NSE'));
+  assert.throws(mark('BSE'), /for NSE, not BSE/);
+});
+
 test('a mark whose record lacks the exchange is not counted', () => {
   const d = desk();
   const id = legacy(d, 'owner');
