@@ -53,10 +53,10 @@ export function portfolio(state, now = Date.now()) {
   };
 }
 
-export function latestEvidence(state, kind, symbol, { ownerOnly = false } = {}) {
+export function latestEvidence(state, kind, symbol, { ownerOnly = false, exchange } = {}) {
   for (let i = state.evidence.length - 1; i >= 0; i--) {
     const e = state.evidence[i];
-    if (!e.trashed && e.kind === kind && e.symbol === symbol && (!ownerOnly || e.by === 'owner')) return e;
+    if (!e.trashed && e.kind === kind && e.symbol === symbol && (!ownerOnly || e.by === 'owner') && (exchange === undefined || e.exchange === exchange)) return e;
   }
   return null;
 }
@@ -249,7 +249,7 @@ export function evaluateBuy(state, intent, now, answers = {}) {
   const ex = plan.exchange;
   const quote = latestCounting(state, { kind: 'quote', symbol: intent.symbol, exchange: ex, today });
   const otherEx = ex === 'NSE' ? 'BSE' : 'NSE';
-  const agentQuote = latestEvidence(state, 'quote', intent.symbol);
+  const agentQuote = latestEvidence(state, 'quote', intent.symbol, { exchange: ex });
   const unconfirmed = agentQuote && !counts(agentQuote, today) ? ` An agent found ₹${agentQuote.price}; confirm it if Kite shows the same.` : '';
   if (!quote) {
     const other = latestCounting(state, { kind: 'quote', symbol: intent.symbol, exchange: otherEx, today });

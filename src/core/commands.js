@@ -188,9 +188,12 @@ export function verifyEvidence(state, input, { actor, now }) {
   if (actor !== 'owner') throw new UserError('Only the owner can verify a record.');
   const e = openRecord(state, input.id);
   if (NEEDS_OWNER_CONFIRMATION.has(e.kind)) throw new UserError('Prices and MTF requirements are confirmed against Kite, not verified.');
+  if (EXCHANGE_KINDS.has(e.kind) && e.exchange === undefined) throw new UserError('That record does not say which exchange it is for. Correct it and say the exchange.');
   const today = indiaDate(now);
+  // Default: the record's own date plus the kind's days, but never earlier than today.
+  const suggested = suggestGoodUntil(e.kind, indiaDate(Date.parse(e.observedAt)));
   const goodUntil = input.goodUntil === undefined
-    ? suggestGoodUntil(e.kind, today)
+    ? (suggested < today ? today : suggested)
     : goodUntilDate(input.goodUntil, today);
   return { events: [{ type: 'evidence.verified', data: { id: e.id, goodUntil } }], result: { id: e.id, goodUntil } };
 }
@@ -485,7 +488,10 @@ export function markPrepared(state, input, { actor, now }) {
     if (!e || e.trashed) throw new UserError(`Choose the verified “${item.kind}” record this rests on.`);
     if (e.kind !== item.kind) throw new UserError(`This item needs a “${item.kind}” record, not “${e.kind}”.`);
     if (e.symbol !== want) throw new UserError(`This item needs a record saved under ${want}.`);
-    if (e.exchange !== undefined && exchange !== undefined && e.exchange !== exchange) throw new UserError(`That record is for ${e.exchange}, not ${exchange}.`);
+    if (isExchangeBound(item) && EXCHANGE_KINDS.has(e.kind)) {
+      if (e.exchange === undefined) throw new UserError('That record does not say which exchange it is for. Correct it and say the exchange.');
+      if (e.exchange !== exchange) throw new UserError(`That record is for ${e.exchange}, not ${exchange}.`);
+    }
     if (!counts(e, indiaDate(now))) throw new UserError('That record does not count yet: only records you entered or verified, still within good-until, can be used.');
     data.evidenceId = e.id;
   }

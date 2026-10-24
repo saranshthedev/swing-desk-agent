@@ -10,6 +10,7 @@
 
 import { LIBRARY_ITEMS, MARKET, toStrategyItem } from './checklist-library.js';
 import { strategyWindow, isExchangeBound } from './strategies.js';
+import { EXCHANGE_KINDS } from './evidence.js';
 import { recordStatus, counts, latestCounting } from './knowledge.js';
 import { researchStatus, masterStatus } from './rules.js';
 import { addDays, daysBetween, indiaDate } from './time.js';
@@ -52,10 +53,10 @@ export function researchItemState(state, strategy, item, symbol, exchange, now) 
   let expiresOn = addDays(markedOn, expireDays);
   if (item.type === 'evidence') {
     const record = mark.evidenceId ? state.evidence.find((e) => e.id === mark.evidenceId) : null;
-    if (!record || record.kind !== item.kind || record.symbol !== recordSymbol(item, symbol)) return { status: 'missing', detail: `Not prepared with a “${item.kind}” record yet. Prepare it on the Prepare page.` };
+    if (!record || record.kind !== item.kind || record.symbol !== recordSymbol(item, symbol) || (isExchangeBound(item) && EXCHANGE_KINDS.has(item.kind) && record.exchange !== exchange)) return { status: 'missing', detail: `Not prepared with a “${item.kind}” record yet. Prepare it on the Prepare page.` };
     const rs = recordStatus(record, today);
     if (rs === 'corrected') return { status: 'broken', detail: 'The record you prepared this with was corrected. Prepare it again with the new record; the wait starts again.' };
-    if (rs === 'trashed') return { status: 'broken', detail: 'The record you prepared this with is in the Trash. Prepare it again with another record; the wait starts again.' };
+    if (rs === 'trashed') return { status: 'broken', detail: 'The record you prepared this with is in the Trash. Restore it, or prepare again with another record; the wait starts again.' };
     if (rs !== 'verified') {
       return { status: 'broken', detail: `The record you prepared this with ${record.goodUntil ? `was good until ${record.goodUntil}` : 'is not verified'}. Add or verify a new record and prepare it again.`, validFrom, expiresOn };
     }

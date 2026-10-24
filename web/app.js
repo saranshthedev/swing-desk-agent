@@ -194,6 +194,8 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.tip')) for (const b of document.querySelectorAll('button.info[aria-expanded="true"]')) { delete b.dataset.hover; toggleInfo(b, false); }
 });
 document.addEventListener('keydown', (e) => {
+  // Enter in a Verify date must not submit the approval form around it.
+  if (e.key === 'Enter' && e.target.matches?.('[data-verify-date]')) { e.preventDefault(); e.target.closest('.verify')?.querySelector('[data-action="verify-evidence"]')?.click(); return; }
   if (e.key !== 'Escape') return;
   for (const b of document.querySelectorAll('button.info[aria-expanded="true"]')) toggleInfo(b, false);
 });
@@ -544,6 +546,8 @@ const PRICE_KINDS = new Set(['quote', 'candles', 'zones']); // mirrors EXCHANGE_
 const GOOD_DAYS = { candles: 5, zones: 5, sector: 5, macro: 7, governance: 90, legal: 90, other: 90, fundamentals: 90, news: 0, quote: 0, funding: 0 };
 const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const suggestGoodUntil = (kind, date) => addDays(date, GOOD_DAYS[kind] ?? 90);
+// Good-until suggestion for a record seen on `observed`: its date plus the kind's days, never before today.
+const suggestFrom = (kind, observed, today) => { const s = suggestGoodUntil(kind, observed); return s < today ? today : s; };
 const RECORD_TAG = { found: ['Found, not verified', 'tag-warn'], verified: ['Verified', 'tag-ok'], expired: ['Past good-until', 'tag-muted'], corrected: ['Corrected', 'tag-bad'], trashed: ['In the Trash', 'tag-muted'] };
 const recordTag = (e) => { const [label, cls] = RECORD_TAG[e.status] ?? [e.status, 'tag-muted']; return `<span class="tag ${cls}">${esc(label)}</span>`; };
 const CALL = { wait: ['Wait', 'tag-warn'], buy: ['Buy', 'tag-ok'], hold: ['Hold', 'tag-muted'], sell: ['Sell', 'tag-bad'] };
@@ -568,7 +572,8 @@ function itemDef(strategyId, id) {
   return null;
 }
 const libraryItem = (id) => S.meta.checklist.groups.flatMap((g) => g.items).find((i) => i.id === id);
-const isBound = (item) => item.exchangeBound ?? libraryItem(item.id)?.exchangeBound ?? false;
+// Mirrors isExchangeBound in src/core/strategies.js: price-type evidence is always exchange-bound.
+const isBound = (item) => (item.type === 'evidence' && PRICE_KINDS.has(item.kind)) || (item.exchangeBound ?? libraryItem(item.id)?.exchangeBound ?? false);
 const recordSymbol = (item, symbol) => (item.scope === 'market' ? S.meta.checklist.market : symbol);
 /**
  * Records that could answer an evidence item for a stock on an exchange, best first. `list` is
@@ -592,8 +597,12 @@ function recordsFor(item, symbol, exchange, statuses, list = S.evidence) {
 function verifyButton(e) {
   if (e.status !== 'found' || NEEDS_CONFIRM.has(e.kind)) return '';
   const today = S.status.today;
+  const ms = Date.parse(e.observedAt);
+  const observed = Number.isFinite(ms) ? new Date(ms + 19_800_000).toISOString().slice(0, 10) : today; // India date
+  const suggested = suggestFrom(e.kind, observed, today);
+  const old = suggestGoodUntil(e.kind, observed) < today;
   return `<details class="verify"><summary class="btn">Verify…</summary><div class="verify-box">
-    ${field('Good until', `<input name="goodUntil" type="date" min="${today}" value="${suggestGoodUntil(e.kind, today)}" data-verify-date>`)}
+    ${field('Good until', `<input name="goodUntil" type="date" min="${today}" value="${suggested}" data-verify-date>`, old ? 'This record is old, so the date starts today. Re-check it is still right before you verify.' : 'Chart readings 5 days, fundamentals 90 days, market-wide 7, news today only. Counts from the record’s date.')}
     <button type="button" class="btn primary" data-action="verify-evidence" data-id="${esc(e.id)}" aria-label="Verify this ${esc(e.kind)} record for ${esc(e.symbol)}">Verify: it is right</button></div></details>`;
 }
 
@@ -962,6 +971,7 @@ function strategyEditor(id) {
       ${id === 'new' ? field('Start from', `<select name="copyFrom">${options([['', 'Blank checklist'], ...S.strategies.map((s) => [s.id, `Copy of ${s.name}`])], d.copyFrom ?? '')}</select>`, 'Copies the checklist so you can change it. The original stays as it is.') : ''}
       <div class="grid">${field('Id (letters, digits, dashes)', `<input name="id" required value="${esc(d.id)}" ${id === 'new' ? '' : 'readonly'}>`)}${field('Name', `<input name="name" required value="${esc(d.name)}">`)}</div>
       ${field('Description', `<input name="description" value="${esc(d.description)}">`)}
+      <p class="small muted">Your own items need a unique id. Using a library item’s id shares its prepared mark.</p>
       <label class="check"><input type="checkbox" name="enabled" ${d.enabled ? 'checked' : ''}> <span>Agents can use this strategy</span></label>
       <fieldset class="window" data-info="window"><legend>Research window</legend>
         <div class="grid">${field('Buffer days', num('bufferDays', d.bufferDays ?? w.defaultBuffer, `required step="1" min="${w.minBuffer}" max="${w.maxExpire}"`))}${field('Expire days', num('expireDays', d.expireDays ?? w.defaultExpire, `required step="1" min="${w.minBuffer}" max="${w.maxExpire}"`))}</div>
@@ -980,7 +990,7 @@ function strategyEditor(id) {
         ${it.type === 'evidence' ? field('Evidence kind', `<select data-item="kind">${options(kinds.map((k) => [k, k]), it.kind)}</select>`) : ''}
         ${it.type === 'evidence' && (it.stage ?? 'before') !== 'research' ? field('Max age (days, 0 = today)', `<input data-item="maxAgeDays" type="number" min="0" max="30" step="1" value="${esc(it.maxAgeDays ?? 0)}">`) : ''}
         ${it.type !== 'rule' ? field('Required', `<input type="checkbox" data-item="required" ${it.required !== false ? 'checked' : ''}>`) : ''}
-        ${it.type !== 'rule' ? field('Uses one exchange’s prices', `<input type="checkbox" data-item="exchangeBound" ${isBound(it) ? 'checked' : ''}>`) : ''}
+        ${it.type !== 'rule' ? field('Uses one exchange’s prices', `<input type="checkbox" data-item="exchangeBound" ${isBound(it) ? 'checked' : ''} ${it.type === 'evidence' && PRICE_KINDS.has(it.kind) ? 'disabled' : ''}>`, it.type === 'evidence' && PRICE_KINDS.has(it.kind) ? 'Always on for price, chart and zone records: a mark needs a record from the same exchange.' : '') : ''}
         </div><button type="button" class="btn small-btn" data-action="remove-item" data-n="${n}">Remove item</button></fieldset>`).join('')}
       <div class="actions"><button type="button" class="btn" data-action="add-item">Add item</button><button type="button" class="btn" data-action="refresh-items">Update form for changed types</button></div>
       ${pinField()}<button class="btn primary">Save strategy</button>

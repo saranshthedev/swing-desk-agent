@@ -79,6 +79,8 @@ export const TOOLS = {
     description: `For one stock and strategy, which checklist items already pass and which still need evidence or the owner’s answer, split into research (days before) and before-buy (on the day) stages. Research items count only after the owner prepares them and the strategy’s buffer has passed (status wait, with validFrom), and only until its expire; readyOn is the first India date all required research counts. Call it before researching and before proposing. ${RECORD_RULES}`,
     inputSchema: obj({ symbol, strategyId: str('Strategy id from list_strategies', 40), exchange: { type: 'string', enum: ['NSE', 'BSE'], description: 'Exchange for price-based items (default NSE)' } }, ['symbol', 'strategyId']),
     run: (store, _a, args) => store.read((s, now) => {
+      const strat = s.strategies[args.strategyId];
+      if (!strat || strat.trashed || strat.purged) throw new UserError('Unknown strategy.');
       const r = researchStatus(s, symbolOf(args.symbol), args.strategyId, exchangeOf(args.exchange), now);
       if (!r) throw new UserError('Unknown strategy.');
       return r;

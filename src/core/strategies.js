@@ -19,7 +19,7 @@
 // Built-ins are at version 3 (Complete: 2) since they gained the research window and exchange flags.
 
 import { UserError } from './settings.js';
-import { EVIDENCE_KINDS } from './evidence.js';
+import { EVIDENCE_KINDS, EXCHANGE_KINDS } from './evidence.js';
 import { LIBRARY_ITEMS, WINDOW, toStrategyItem } from './checklist-library.js';
 
 export const RULES = {
@@ -106,8 +106,12 @@ export function strategyWindow(strategy) {
   return { bufferDays: strategy?.bufferDays ?? WINDOW.defaultBuffer, expireDays: strategy?.expireDays ?? WINDOW.defaultExpire };
 }
 
-/** Whether an item rests on exchange data: its own flag, else the library default, else false. */
+/**
+ * Whether an item rests on exchange data. Every evidence item of a price kind (quote, candles,
+ * zones) is, whatever its flag says; otherwise its own flag, else the library default, else false.
+ */
 export function isExchangeBound(item) {
+  if (item.type === 'evidence' && EXCHANGE_KINDS.has(item.kind)) return true;
   return item.exchangeBound ?? LIBRARY_ITEMS.find((i) => i.id === item.id)?.exchangeBound ?? false;
 }
 
