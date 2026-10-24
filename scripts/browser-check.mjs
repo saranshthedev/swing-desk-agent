@@ -235,6 +235,19 @@ try {
   await shot('settings-help', 390);
   await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   assert.equal(await js('document.querySelector(".field .info").getAttribute("aria-expanded")'), 'false');
+  // Mouse: hovering opens the help, leaving closes it, and a click while hovered keeps it open.
+  const infoAt = await js('(() => { const r = document.querySelector(".field .info").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()');
+  const infoOpen = () => js('document.querySelector(".field .info").getAttribute("aria-expanded")');
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: infoAt.x, y: infoAt.y });
+  assert.equal(await until(async () => (await infoOpen()) === 'true' && 'true', 'help opens on hover'), 'true');
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
+  assert.equal(await until(async () => (await infoOpen()) === 'false' && 'false', 'help closes after hover'), 'false');
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: infoAt.x, y: infoAt.y });
+  for (const type of ['mousePressed', 'mouseReleased']) await cdp('Input.dispatchMouseEvent', { type, x: infoAt.x, y: infoAt.y, button: 'left', clickCount: 1 });
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
+  await delay(300);
+  assert.equal(await infoOpen(), 'true', 'a clicked help stays open after the mouse leaves');
+  await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
 
   // Risk presets fill the boxes from capital; typing a number switches to Custom.
   assert.match(await text(), /Your saved limits: Balanced/);
@@ -335,6 +348,17 @@ try {
   await delay(800);
   await go('#/settings');
   assert.doesNotMatch(await text(), /Please restart it/);
+
+  // Disconnect is its own clear action: the key stops working and the agent moves to the disconnected list.
+  await go('#/agents');
+  assert.match(await text(), /Change access or limits/);
+  await submit('agent-update', { pin: '24681357' }, { nth: 1 });
+  assert.match(await toast(), /disconnected/);
+  await waitText('Disconnected agents (1)');
+  assert.doesNotMatch(await text(), /Change access or limits/);
+  const afterDisconnect = (await rpc('tools/call', { name: 'desk_status', arguments: {} })).result;
+  assert.ok(afterDisconnect.isError, 'a disconnected key can no longer call the desk');
+  await shot('agents-disconnected');
 
   // The flow deliberately triggers two refusals (wrong PIN, approving too early); those 400s are expected.
   const real = errors.filter((e) => !/status of 400 \(Bad Request\) .*\/api\/action\/(settings\.change|intent\.approve)/.test(e));

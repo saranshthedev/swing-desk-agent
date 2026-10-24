@@ -99,7 +99,7 @@ export function strategyItemsHtml(items, { checklist, esc }) {
     const list = items.map((it) => ({ ...it, stage: it.stage ?? 'before' })).filter((it) => it.stage === stage);
     if (!list.length) return '';
     return `<h3 class="cl-stage-title">${stage === 'research' ? '1' : '2'}. ${esc(checklist.stages[stage].title)} <span class="small muted">${list.length} checks</span></h3>
-      ${groupsOf(list, checklist).map(([gid, group]) => `<details class="cl-group"><summary><span class="cl-group-title">${esc(groupName(gid, checklist))}</span> <span class="small muted">${group.length}</span></summary>
-        <ul class="checklist">${group.map((it) => `<li><span class="tag tag-muted">${it.type === 'evidence' ? `Evidence: ${esc(it.kind)}${it.scope === 'market' ? ' (market)' : ''}` : CHECK_TYPE[it.type]}</span> ${esc(it.label)}${it.required ? '' : ' <span class="muted">(optional)</span>'}</li>`).join('')}</ul></details>`).join('')}`;
+      <div class="cl-group-grid">${groupsOf(list, checklist).map(([gid, group]) => `<details class="cl-group"><summary><span class="cl-group-title">${esc(groupName(gid, checklist))}</span> <span class="small muted">${group.length}</span></summary>
+        <ul class="checklist">${group.map((it) => `<li><span class="tag tag-muted">${it.type === 'evidence' ? `Evidence: ${esc(it.kind)}${it.scope === 'market' ? ' (market)' : ''}` : CHECK_TYPE[it.type]}</span> ${esc(it.label)}${it.required ? '' : ' <span class="muted">(optional)</span>'}</li>`).join('')}</ul></details>`).join('')}</div>`;
   }).join('');
 }

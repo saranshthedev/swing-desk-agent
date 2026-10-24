@@ -119,7 +119,7 @@ function addInfoButtons(root) {
   const targets = [
     ...[...root.querySelectorAll('.field')].map((f) => {
       const control = f.querySelector('input, select, textarea');
-      return { host: f.querySelector('.field-label'), after: f.querySelector('.field-label'), key: control?.name || control?.dataset.item, form: control?.closest('form')?.dataset.form, label: f.querySelector('label')?.textContent };
+      return { host: f.querySelector('.field-label'), after: null, key: control?.name || control?.dataset.item, form: control?.closest('form')?.dataset.form, label: f.querySelector('label')?.textContent };
     }),
     ...[...root.querySelectorAll('[data-info]')].map((el) => {
       const head = el.querySelector('legend, h2, h3') ?? el;
@@ -143,18 +143,42 @@ function addInfoButtons(root) {
     tip.hidden = true;
     tip.textContent = text;
     t.host.append(button);
-    t.after.after(tip);
+    (t.after ?? button).after(tip);
   }
 }
 
 function toggleInfo(button, open = button.getAttribute('aria-expanded') !== 'true') {
   button.setAttribute('aria-expanded', String(open));
+  if (!open) delete button.dataset.hover;
   document.getElementById(button.getAttribute('aria-controls')).hidden = !open;
 }
 
+// Hovering an “i” shows its help; clicking pins it open (or closes it). Touch taps pin directly.
+let infoHoverClose;
+const closeHoverInfo = (except) => {
+  for (const b of document.querySelectorAll('button.info[data-hover]')) if (b !== except) { delete b.dataset.hover; toggleInfo(b, false); }
+};
+document.addEventListener('mouseover', (e) => {
+  const button = e.target.closest?.('button.info');
+  if (button) {
+    clearTimeout(infoHoverClose);
+    closeHoverInfo(button);
+    if (button.getAttribute('aria-expanded') !== 'true') { button.dataset.hover = '1'; toggleInfo(button, true); }
+  } else if (e.target.closest?.('.tip')) clearTimeout(infoHoverClose);
+});
+document.addEventListener('mouseout', (e) => {
+  const from = e.target.closest?.('button.info, .tip');
+  if (!from || from.contains(e.relatedTarget)) return;
+  const button = from.matches('.tip') ? document.querySelector(`button.info[aria-controls="${from.id}"]`) : from;
+  if (!button?.dataset.hover) return;
+  clearTimeout(infoHoverClose);
+  infoHoverClose = setTimeout(() => closeHoverInfo(), 150);
+});
 document.addEventListener('click', (e) => {
   const button = e.target.closest('button.info');
-  if (button) toggleInfo(button);
+  if (button?.dataset.hover) { delete button.dataset.hover; return; }
+  if (button) { toggleInfo(button); return; }
+  if (!e.target.closest('.tip')) for (const b of document.querySelectorAll('button.info[aria-expanded="true"]')) { delete b.dataset.hover; toggleInfo(b, false); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -346,13 +370,12 @@ const pages = {
 
   agents() {
     const shown = drafts.newKey;
+    const live = S.agents.filter((a) => !a.revoked), gone = S.agents.filter((a) => a.revoked);
     return `<header class="page-head"><h1>Agents &amp; MCP</h1></header>
       <p class="lead">Connect any model app that speaks MCP. Each connection gets its own key, access level and limits. No level can approve, place orders, change access, edit strategies or delete history.</p>
       ${shown ? `<section class="card highlight"><h2>Key for ${esc(shown.name)} — shown once</h2><p>Add this to the model app’s MCP settings. Anyone with this key can act as this agent.</p><pre class="code">${esc(JSON.stringify({ mcpServers: { 'swing-desk': { ...S.meta.mcp, env: { ...(S.meta.mcp.env || {}), SWING_DESK_AGENT_KEY: shown.key } } } }, null, 2))}</pre><button class="btn" data-action="hide-key">I have saved it</button></section>` : ''}
-      <section class="card"><h2>Connections</h2>${S.agents.length ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>Access</th><th>Limits</th><th>Today</th><th>Key expires</th><th></th></tr></thead><tbody>
-        ${S.agents.map((a) => { const u = a.usage[S.status.today] ?? { writes: 0, intents: 0 }; return `<tr><td><b>${esc(a.name)}</b><div class="small muted">${esc(a.client)}</div></td><td>${a.revoked ? '<span class="tag tag-bad">revoked</span>' : `<span class="tag scope-${a.scope}">${a.scope}</span>`}</td><td class="small">${a.limits.intentsPerDay} requests/day · ${a.limits.writesPerDay} writes/day · ${a.limits.callsPerHour} calls/hour</td><td class="small">${u.intents} requests · ${u.writes} writes</td><td class="small">${when(a.expiresAt)}</td>
-        <td>${a.revoked ? '' : `<details><summary class="btn">Change</summary><form class="form" data-form="agent-update"><input type="hidden" name="id" value="${esc(a.id)}">${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), a.scope)}</select>`)}${field('Requests per day', num('intentsPerDay', a.limits.intentsPerDay, 'step="1" min="0"'))}${field('Writes per day', num('writesPerDay', a.limits.writesPerDay, 'step="1" min="0"'))}${field('Calls per hour', num('callsPerHour', a.limits.callsPerHour, 'step="1" min="0"'))}${field('Revoke this key', '<input type="checkbox" name="revoked">')}${pinField()}<div class="actions"><button class="btn primary">Save</button><button class="btn" name="rekey" value="1">New key</button></div></form></details>`}</td></tr>`; }).join('')}
-        </tbody></table></div>` : '<p class="muted">No agents yet.</p>'}</section>
+      <section class="card"><h2>Connections</h2>${live.length ? `<ul class="agent-list">${live.map(agentRow).join('')}</ul>` : '<p class="muted">No connected agents. Add one below.</p>'}
+        ${gone.length ? `<details class="agent-gone"><summary>Disconnected agents (${gone.length})</summary><ul class="rows">${gone.map((a) => `<li><div><b>${esc(a.name)}</b> <span class="tag tag-bad">disconnected</span><div class="small muted">${esc(a.client)} · its past calls and requests stay in the ledger</div></div></li>`).join('')}</ul></details>` : ''}</section>
       <form class="card form" data-form="agent-add"><h2>Add an agent</h2>
         ${field('Start from', `<select name="agentPreset">${options([...Object.entries(S.meta.presets.agents).map(([k, p]) => [k, `${p.label} – ${p.about}`]), ['custom', 'Custom – choose everything yourself']], 'researcher')}</select>`)}
         <div class="grid">${field('Name', '<input name="name" required placeholder="Claude research">')}${field('App', '<input name="client" placeholder="Claude Code">')}
@@ -390,7 +413,7 @@ const pages = {
         ${field('New PIN (6–12 digits)', '<input name="pin" type="password" inputmode="numeric" autocomplete="off" required minlength="6" maxlength="12" pattern="[0-9]{6,12}">')}
         <button class="btn primary">Save PIN</button></form>
       <section class="card"><h2>Backup</h2><p class="muted">Writes a full copy of the database to your backup folder.</p><button class="btn" data-action="backup">Back up now</button></section>
-      <section class="card"><h2>Charges</h2><p class="muted">Zerodha rates checked ${esc(S.status.fees.checkedOn)} (${esc(S.status.fees.source)}). Each approved buy keeps a frozen copy.</p></section>`;
+      <section class="card"><h2>Charges</h2><p class="muted">Zerodha rates checked ${esc(S.status.fees.checkedOn)}. Each approved buy keeps a frozen copy.</p>${sourcesList(String(S.status.fees.source ?? "").split(" · ").filter(Boolean))}</section>`;
   },
 };
 
@@ -478,6 +501,21 @@ function agentFinding(symbol, kind) {
 function sourcesList(list) {
   if (!list?.length) return '';
   return `<div class="small">${list.map((s) => /^https?:\/\//.test(s) ? `<a href="${esc(s)}" rel="noopener noreferrer" target="_blank">${esc(s)}</a>` : esc(s)).join(' · ')}</div>`;
+}
+
+function agentRow(a) {
+  const u = a.usage[S.status.today] ?? { writes: 0, intents: 0 };
+  return `<li class="agent">
+    <div class="agent-head"><div><b>${esc(a.name)}</b> <span class="tag scope-${a.scope}">${a.scope}</span><div class="small muted">${esc(a.client)}</div></div>
+      <dl class="agent-facts"><div><dt>Limits</dt><dd>${a.limits.intentsPerDay} requests/day · ${a.limits.writesPerDay} writes/day · ${a.limits.callsPerHour} calls/hour</dd></div><div><dt>Used today</dt><dd>${u.intents} requests · ${u.writes} writes</dd></div><div><dt>Key expires</dt><dd>${when(a.expiresAt)}</dd></div></dl></div>
+    <div class="agent-tools">
+      <details><summary class="btn">Change access or limits</summary><form class="form" data-form="agent-update"><input type="hidden" name="id" value="${esc(a.id)}">
+        <div class="grid">${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), a.scope)}</select>`)}${field('Requests per day', num('intentsPerDay', a.limits.intentsPerDay, 'step="1" min="0"'))}${field('Writes per day', num('writesPerDay', a.limits.writesPerDay, 'step="1" min="0"'))}${field('Calls per hour', num('callsPerHour', a.limits.callsPerHour, 'step="1" min="0"'))}</div>
+        ${pinField()}<div class="actions"><button class="btn primary">Save changes</button><button class="btn" name="rekey" value="1">Replace key</button></div><p class="small muted">Replace key: the old key stops working and a new one is shown once.</p></form></details>
+      <details><summary class="btn danger">Disconnect</summary><form class="form" data-form="agent-update"><input type="hidden" name="id" value="${esc(a.id)}"><input type="hidden" name="revoked" value="1">
+        <p>Disconnecting switches this key off for good. ${esc(a.name)} can no longer call the desk. Its past calls, research and requests stay in the ledger. To connect again, add a new agent.</p>
+        ${pinField()}<div class="actions"><button class="btn danger">Disconnect ${esc(a.name)}</button></div></form></details>
+    </div></li>`;
 }
 
 function lotsTable(lots, closed = false) {
@@ -634,6 +672,7 @@ function describe(e) {
     'task.failed': () => 'Task failed',
     'task.expired': () => 'Task expired',
     'pin.changed': () => 'Approval PIN changed',
+    'research.answered': () => `Research checklist answers for ${d.symbol}`,
   };
   return (map[e.type] ?? (() => e.type))();
 }
@@ -701,7 +740,12 @@ const forms = {
       drafts.newKey = { name: S.agents.find((a) => a.id === data.id)?.name, key: r.key };
       return;
     }
-    await act('agent.update', { id: data.id, scope: data.scope, revoked: data.revoked || undefined, limits: { intentsPerDay: data.intentsPerDay, writesPerDay: data.writesPerDay, callsPerHour: data.callsPerHour }, pin: data.pin });
+    if (data.revoked) {
+      await act('agent.update', { id: data.id, revoked: true, pin: data.pin });
+      toast('Agent disconnected. Its key no longer works.');
+      return;
+    }
+    await act('agent.update', { id: data.id, scope: data.scope, limits: { intentsPerDay: data.intentsPerDay, writesPerDay: data.writesPerDay, callsPerHour: data.callsPerHour }, pin: data.pin });
     toast('Agent updated.');
   },
   async strategy(form) {
