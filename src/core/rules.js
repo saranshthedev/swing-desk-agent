@@ -185,6 +185,24 @@ export function masterStatus(state, symbol, exchange, now) {
   return { symbol, ...preparedStatus(state, MASTER, symbol, exchange, now) };
 }
 
+/** Earliest India date the request's strategy research is all ready, or null (also null if the strategy is unusable). */
+export function intentReadyOn(state, intent, now) {
+  const strategy = state.strategies[intent.strategyId];
+  if (!strategy || strategy.trashed || !intent.plan) return null;
+  return preparedStatus(state, strategy, intent.symbol, intent.plan.exchange, now).readyOn;
+}
+
+function timingCheck(state, intent, exchange, now) {
+  const label = 'Research wait is over before this request expires';
+  const strategy = state.strategies[intent.strategyId];
+  if (!strategy || strategy.trashed) return check('research-timing', label, 'info', 'Not checked: the strategy is unavailable.', false);
+  const ready = preparedStatus(state, strategy, intent.symbol, exchange, now).readyOn;
+  if (!ready) return check('research-timing', label, 'info', 'Some required research is not prepared yet, so no ready date is known.', false);
+  const expiry = indiaDate(Date.parse(intent.expiresAt));
+  if (expiry < ready) return check('research-timing', label, 'fail', `This request expires on ${expiry}, but your research is only ready on ${ready}. Ask the agent to send a new one from ${ready}.`, true);
+  return check('research-timing', label, 'info', `Research is ready from ${ready}.`, false);
+}
+
 export function evaluateBuy(state, intent, now, answers = {}) {
   const plan = { ...intent.plan, sameDay: false, marginPct: intent.plan.buyType === 'regular' ? 100 : intent.plan.marginPct };
   const problem = planProblem(plan);
@@ -228,29 +246,38 @@ export function evaluateBuy(state, intent, now, answers = {}) {
     ? check('weekly', 'Not paused for this week’s losses', 'fail', `This week’s result is ${money(p.weekPnl)}. New buys pause at −${money(p.weekLossLimit)}.`)
     : check('weekly', 'Not paused for this week’s losses', 'pass', `This week so far: ${money(p.weekPnl)}`));
 
-  const quote = latestEvidence(state, 'quote', intent.symbol, { ownerOnly: true });
+  const ex = plan.exchange;
+  const quote = latestCounting(state, { kind: 'quote', symbol: intent.symbol, exchange: ex, today });
+  const otherEx = ex === 'NSE' ? 'BSE' : 'NSE';
   const agentQuote = latestEvidence(state, 'quote', intent.symbol);
-  const unconfirmed = agentQuote && agentQuote.by !== 'owner' ? ` An agent found ₹${agentQuote.price}; confirm it if Kite shows the same.` : '';
+  const unconfirmed = agentQuote && !counts(agentQuote, today) ? ` An agent found ₹${agentQuote.price}; confirm it if Kite shows the same.` : '';
   if (!quote) {
-    checks.push(check('quote', 'Fresh price from your broker', 'stale', `Enter or confirm the current price from Kite. Prices count for 5 minutes.${unconfirmed}`));
+    const other = latestCounting(state, { kind: 'quote', symbol: intent.symbol, exchange: otherEx, today });
+    const wrong = other ? ` You have an ${otherEx} price; this plan is on ${ex}.` : '';
+    checks.push(check('quote', 'Fresh price from your broker', 'stale', `Enter or confirm the current ${ex} price from Kite. Prices count for 5 minutes.${wrong}${unconfirmed}`));
   } else {
     const age = now - Date.parse(quote.observedAt);
     const gap = (Math.abs(quote.price - plan.entry) / plan.entry) * 100;
     if (age > FIXED.quoteMaxAgeMs) checks.push(check('quote', 'Fresh price from your broker', 'stale', `Your last confirmed price is ${Math.round(age / 60_000)} minutes old. Prices count for 5 minutes.${unconfirmed}`));
     else if (gap > FIXED.quoteMaxGapPct) checks.push(check('quote', 'Fresh price from your broker', 'fail', `Price now ₹${quote.price} is ${gap.toFixed(1)}% away from the planned entry. Ask for a new plan.`));
-    else checks.push(check('quote', 'Fresh price from your broker', 'pass', `₹${quote.price} at ${new Date(quote.observedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })} IST`));
+    else checks.push(check('quote', 'Fresh price from your broker', 'pass', `₹${quote.price} on ${ex} at ${new Date(quote.observedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })} IST`));
   }
 
-  const news = latestEvidence(state, 'news', intent.symbol);
-  checks.push(news && indiaDate(Date.parse(news.observedAt)) === today
-    ? check('news', 'News checked today', 'pass', `${news.by === 'owner' ? 'You' : 'An agent (not verified)'}: ${news.summary.slice(0, 120)}`)
-    : check('news', 'News checked today', 'stale', 'No news check from today (India date) for this stock.'));
+  const news = latestCounting(state, { kind: 'news', symbol: intent.symbol, today });
+  const newsToday = news && indiaDate(Date.parse(news.observedAt)) === today ? news : null;
+  if (newsToday) checks.push(check('news', 'News checked today', 'pass', `${newsToday.by === 'owner' ? 'You' : 'Verified by you'}: ${(newsToday.summary || '').slice(0, 120)}`));
+  else {
+    const found = latestEvidence(state, 'news', intent.symbol);
+    const hint = found && !counts(found, today) && indiaDate(Date.parse(found.observedAt)) === today ? ' An agent found news today; verify it if it is right.' : '';
+    checks.push(check('news', 'News checked today', 'stale', `No news check from today (India date) that you entered or verified.${hint}`));
+  }
 
   if (plan.buyType === 'mtf') {
-    const funding = latestEvidence(state, 'funding', intent.symbol, { ownerOnly: true });
-    if (!funding || indiaDate(Date.parse(funding.observedAt)) !== today) {
+    const fundingRec = latestCounting(state, { kind: 'funding', symbol: intent.symbol, today });
+    const funding = fundingRec && indiaDate(Date.parse(fundingRec.observedAt)) === today ? fundingRec : null;
+    if (!funding) {
       const agentFunding = latestEvidence(state, 'funding', intent.symbol);
-      const hint = agentFunding && agentFunding.by !== 'owner' ? ` An agent found ${fundingLabel(agentFunding.marginPct)}; confirm it if Kite shows the same.` : '';
+      const hint = agentFunding && !counts(agentFunding, today) ? ` An agent found ${fundingLabel(agentFunding.marginPct)}; confirm it if Kite shows the same.` : '';
       checks.push(check('funding', 'MTF cash requirement checked today', 'stale', `Check this stock’s MTF requirement in Kite today and record or confirm it.${hint}`));
     } else if (funding.marginPct > plan.marginPct + 0.01) {
       // 0.01 tolerance: 3× is 33.33…% and brokers round it to 33.33%.
@@ -261,6 +288,7 @@ export function evaluateBuy(state, intent, now, answers = {}) {
   }
 
   checks.push(...strategyChecks(state, intent, plan, sizing, now, answers));
+  checks.push(timingCheck(state, intent, plan.exchange, now));
 
   const attached = (intent.evidenceIds || []).length;
   checks.push(check('evidence', 'Agent evidence attached', 'info', attached ? `${attached} item(s), written by a model, not verified` : 'None attached', false));

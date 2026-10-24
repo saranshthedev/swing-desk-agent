@@ -35,7 +35,7 @@ export function latestCounting(state, { kind, symbol, topic, exchange, today }) 
     if (topic !== undefined && e.topic !== topic) continue;
     if (exchange !== undefined && e.exchange !== exchange) continue;
     if (!counts(e, today)) continue;
-    if (!best || e.observedAt > best.observedAt || (e.observedAt === best.observedAt && e.at > best.at)) best = e;
+    if (!best || e.observedAt > best.observedAt || (e.observedAt === best.observedAt && e.at >= best.at)) best = e;
   }
   return best;
 }

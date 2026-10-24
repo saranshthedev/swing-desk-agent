@@ -1,6 +1,6 @@
 // Read models shared by the browser API and MCP tools.
 
-import { evaluate, portfolio, lotRisk } from './rules.js';
+import { evaluate, portfolio, lotRisk, intentReadyOn } from './rules.js';
 import { sizePlan } from './sizing.js';
 import { resolveMarginPct } from './fees.js';
 import { planProblem } from './rules.js';
@@ -16,7 +16,10 @@ export function intentStatus(intent, now) {
 export function intentView(state, intent, now) {
   const view = { ...intent, status: intentStatus(intent, now) };
   if (intent.status === 'pending') view.evaluation = evaluate(state, intent, now);
-  if (intent.kind === 'buy') view.strategyName = state.strategies[intent.strategyId]?.name ?? intent.strategyId;
+  if (intent.kind === 'buy') {
+    view.strategyName = state.strategies[intent.strategyId]?.name ?? intent.strategyId;
+    view.readyOn = intentReadyOn(state, intent, now);
+  }
   if (intent.kind === 'buy' || intent.kind === 'exit') {
     view.lots = Object.values(state.lots).filter((l) => l.intentId === intent.id).map((l) => l.id);
   }

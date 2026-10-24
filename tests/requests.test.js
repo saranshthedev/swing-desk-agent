@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as C from '../src/core/commands.js';
 import { evaluate, portfolio } from '../src/core/rules.js';
+import { intentView } from '../src/core/views.js';
 import { desk, PLAN, readyEvidence, answersFor, prepareAll } from './helpers.js';
 
 const buy = (agent, extra = {}) => agent.run(C.submitIntent, { kind: 'buy', symbol: 'ABC', strategyId: 'breakout', thesis: 'Breakout', plan: PLAN, ...extra });
@@ -154,4 +155,51 @@ test('a 3× plan passes a Kite limit recorded as 33.33% (rounded)', () => {
   const ev = checks(d, id);
   assert.equal(status(ev, 'funding'), 'fail');
   assert.match(ev.checks.find((c) => c.id === 'funding').detail, /at most 2\.5× \(40% own cash\)/);
+});
+
+test('agent evidence alone never passes an evidence check', () => {
+  const d = desk();
+  const agent = d.addAgent('propose');
+  agent.run(C.addEvidence, { kind: 'news', symbol: 'ABC', summary: 'Nothing new' });
+  const { id } = buy(agent);
+  const ev = checks(d, id);
+  assert.equal(status(ev, 'news'), 'stale');
+  assert.match(ev.checks.find((c) => c.id === 'news').detail, /verify/i);
+});
+
+test('a price from the other exchange does not count and the check says so', () => {
+  const d = desk();
+  const agent = d.addAgent('propose');
+  d.owner(C.addEvidence, { kind: 'quote', symbol: 'ABC', exchange: 'NSE', price: 100.1 });
+  const { id } = buy(agent, { plan: { ...PLAN, exchange: 'BSE' } });
+  const q = checks(d, id).checks.find((c) => c.id === 'quote');
+  assert.equal(q.status, 'stale');
+  assert.match(q.detail, /NSE.*BSE/);
+});
+
+test('a request that expires before its research is ready fails research-timing', () => {
+  const d = desk();
+  const agent = d.addAgent('propose');
+  const start = d.clock.now;
+  prepareAll(d); // marks everything today, then waits 3 days
+  d.clock.now = start; // ...but this request is sent on the marking day
+  const { id } = buy(agent, { expiresInHours: 24 });
+  const view = d.store.read((s, now) => ({ ev: evaluate(s, s.intents[id], now), v: intentView(s, s.intents[id], now) }));
+  const t = view.ev.checks.find((c) => c.id === 'research-timing');
+  assert.equal(t.status, 'fail');
+  assert.match(t.detail, /2026-10-24/);
+  assert.match(t.detail, /send a new one from \d{4}-\d{2}-\d{2}/);
+  assert.equal(view.v.readyOn === null || typeof view.v.readyOn === 'string', true);
+});
+
+test('full happy path: prepared, waited, verified and ticked on the day', () => {
+  const d = desk();
+  const agent = d.addAgent('propose');
+  prepareAll(d);
+  readyEvidence(d, 'ABC', agent);
+  const { id } = buy(agent);
+  const ev = checks(d, id, answersFor(d));
+  assert.equal(status(ev, 'research-timing'), 'info');
+  assert.equal(ev.ready, true);
+  d.owner(C.approveIntent, { id, answers: answersFor(d) });
 });
