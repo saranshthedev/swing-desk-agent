@@ -362,10 +362,10 @@ test('sell when a record the research rested on is corrected', () => {
 test('sell when a newer record on the same topic says bad', () => {
   const d = desk();
   heldLot(d);
-  d.owner(C.addEvidence, { kind: 'news', symbol: 'ABC', summary: 'Probe opened', topic: 'events-legal', verdict: 'bad' });
+  d.owner(C.addEvidence, { kind: 'news', symbol: 'ABC', summary: 'Probe opened', topic: 'sector-strength', verdict: 'bad' });
   const r = rec(d);
   assert.equal(r.call, 'sell');
-  assert.match(r.reasons.join(' '), /events-legal/);
+  assert.match(r.reasons.join(' '), /sector-strength/);
 });
 
 test('expired research on a held stock is recheck, not sell', () => {
@@ -400,4 +400,44 @@ test('call outside wait/buy/hold/sell throws', () => {
   assert.throws(() => d.owner(C.addRecommendation, { ...base, call: 'buy', exchange: undefined }), /NSE or BSE/);
   assert.throws(() => d.owner(C.addRecommendation, { ...base, call: 'buy', strategyIds: ['nope'] }), /strateg/i);
   assert.throws(() => d.owner(C.addRecommendation, { ...base, call: 'buy', reasons: 'x'.repeat(4001) }), /4000/);
+});
+
+test('a correction behind an item outside the lot’s set does not cause sell', () => {
+  const d = desk();
+  const kind = LIBRARY_ITEMS.find((i) => i.id === 'flows-holding').check.evidence;
+  const stray = d.owner(C.addEvidence, { kind, symbol: 'ABC', summary: 'Holding', ...(EXCHANGE_KINDS.has(kind) ? { exchange: 'NSE' } : {}) });
+  d.owner(C.markPrepared, { symbol: 'ABC', itemId: 'flows-holding', exchange: 'NSE', evidenceId: stray.id, yes: true });
+  const inSet = d.store.read((s) => s.strategies.breakout.items.some((i) => i.id === 'flows-holding'));
+  assert.equal(inSet, false);
+  heldLot(d);
+  d.owner(C.correctEvidence, { corrects: stray.id, reason: 'Wrong figure', summary: 'Fixed' });
+  assert.equal(rec(d).call, 'hold');
+});
+
+test('a correction behind an item in the lot’s decision checks causes sell', () => {
+  const d = desk();
+  const { id } = heldLot(d);
+  const mark = d.store.read((s) => {
+    const strat = s.strategies.breakout;
+    const ids = s.intents[id].decision.checks.map((c) => c.id);
+    const item = strat.items.find((i) => i.type === 'evidence' && i.stage === 'research' && ids.includes(`item:${i.id}`));
+    return Object.entries(s.prepared).find(([k]) => k.startsWith(`ABC|${markKey(strat, item)}|`))?.[1];
+  });
+  assert.ok(mark?.evidenceId, 'a strategy evidence mark exists');
+  d.owner(C.correctEvidence, { corrects: mark.evidenceId, reason: 'Wrong figure', summary: 'Fixed' });
+  const r = rec(d);
+  assert.equal(r.call, 'sell');
+  assert.match(r.reasons.join(' '), /corrected after you bought/);
+});
+
+test('recheck names only items in the lot’s set', () => {
+  const d = desk();
+  d.owner(C.markPrepared, { symbol: 'ABC', itemId: 'fund-margins', exchange: 'NSE', yes: true }); // non-core, not in breakout
+  const label = LIBRARY_ITEMS.find((i) => i.id === 'fund-margins').label;
+  heldLot(d);
+  d.clock.now += 3 * DAY;
+  const r = rec(d);
+  assert.equal(r.call, 'hold', r.reasons.join(' | '));
+  assert.ok(r.recheck.length > 0);
+  assert.ok(!r.recheck.includes(label));
 });

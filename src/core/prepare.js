@@ -95,36 +95,51 @@ function istTime(ms) {
 
 const markOf = (state, strategy, item, symbol, exchange) => state.prepared?.[preparedKey(symbol, markKey(strategy, item), markExchange(item, exchange))];
 
+/**
+ * The research items one open lot relied on: the items its own request was checked against
+ * (`item:<id>` in decision.checks, read from its strategy) plus the master core research items.
+ * Each entry is { strat, item, key }.
+ */
+function lotItems(state, lot) {
+  const intent = state.intents[lot.intentId];
+  const strategy = intent ? state.strategies[intent.strategyId] : null;
+  const ids = new Set((intent?.decision?.checks ?? []).map((c) => c.id).filter((id) => typeof id === 'string' && id.startsWith('item:')).map((id) => id.slice(5)));
+  const out = new Map();
+  const add = (strat, item) => {
+    if (!preparable(item)) return;
+    const key = markKey(strat, item);
+    if (!out.has(key)) out.set(key, { strat, item, key });
+  };
+  for (const item of strategy?.items ?? []) if (ids.has(item.id)) add(strategy, item);
+  for (const item of MASTER_ITEMS) if (CORE_IDS.has(item.id)) add(MASTER_STRATEGY, item);
+  return [...out.values()];
+}
+
 /** Reasons this open lot may be sold, and research labels worth a re-check (never a sell reason). */
 function lotReview(state, lot, now) {
   const today = indiaDate(now);
   const sell = [];
-  const intent = state.intents[lot.intentId];
-  const strategy = intent ? state.strategies[intent.strategyId] : null;
-  const itemIds = new Set((intent?.decision?.checks ?? []).map((c) => c.id).filter((id) => typeof id === 'string' && id.startsWith('item:')).map((id) => id.slice(5)));
+  const set = lotItems(state, lot);
+  const topics = new Set(set.map((x) => x.item.id));
 
-  // Records this stock's research rests on: every mark for the stock, plus the marks of the
-  // items the lot's own request was checked against.
+  // Records the lot's research rested on.
   const refs = new Map();
-  const take = (mark) => {
+  for (const { strat, item } of set) {
+    const mark = markOf(state, strat, item, lot.symbol, lot.exchange);
     const r = mark?.evidenceId ? state.evidence.find((e) => e.id === mark.evidenceId) : null;
     if (r) refs.set(r.id, r);
-  };
-  for (const [key, mark] of Object.entries(state.prepared ?? {})) {
-    const [sym, , ex] = key.split('|');
-    if (sym === lot.symbol && (ex === '' || ex === lot.exchange)) take(mark);
   }
-  for (const item of strategy?.items ?? []) {
-    if (itemIds.has(item.id)) take(markOf(state, strategy, item, lot.symbol, lot.exchange));
-  }
+  const opened = new Date(`${lot.date}T00:00:00+05:30`).toISOString();
   for (const r of refs.values()) {
-    if (recordStatus(r, today) === 'corrected') sell.push(`A record your research rested on (${r.kind}${r.topic ? `, ${r.topic}` : ''}, saved ${indiaDate(Date.parse(r.at))}) was corrected after you bought.`);
+    if (recordStatus(r, today) !== 'corrected') continue;
+    const fixedAt = state.evidence.find((e) => e.id === r.correctedBy)?.at;
+    const when = fixedAt && fixedAt > opened ? ' after you bought' : '';
+    sell.push(`A record your research rested on (${r.kind}${r.topic ? `, ${r.topic}` : ''}, saved ${indiaDate(Date.parse(r.at))}) was corrected${when}.`);
   }
 
-  // A newer counting record on the same stock and topic that says “bad”.
-  const opened = new Date(`${lot.date}T00:00:00+05:30`).toISOString();
+  // A newer counting record on the same stock and one of those items that says “bad”.
   for (const b of state.evidence) {
-    if (b.symbol !== lot.symbol || !b.topic || b.verdict !== 'bad' || !counts(b, today)) continue;
+    if (b.symbol !== lot.symbol || !topics.has(b.topic) || b.verdict !== 'bad' || !counts(b, today)) continue;
     const older = [...refs.values()].filter((r) => r.topic === b.topic).map((r) => r.at);
     const cutoff = older.length ? older.reduce((a, x) => (x > a ? x : a)) : opened;
     if (b.at > cutoff) sell.push(`A newer record on “${b.topic}” (saved ${indiaDate(Date.parse(b.at))}) is marked bad.`);
@@ -141,23 +156,18 @@ function lotReview(state, lot, now) {
   const last = addDays(lot.date, lot.plannedDays);
   if (today > last) sell.push(`The planned ${lot.plannedDays} holding days from ${lot.date} ended on ${last}.`);
 
-  // Research that has gone out of date.
+  // Research the lot relied on that has gone out of date.
   const recheck = [];
-  const scan = (strat, items) => {
-    for (const item of items) {
-      if (!preparable(item)) continue;
-      const st = researchItemState(state, strat, item, lot.symbol, lot.exchange, now);
-      let old = st.status === 'expired';
-      if (st.status === 'broken') {
-        const mark = markOf(state, strat, item, lot.symbol, lot.exchange);
-        const r = mark?.evidenceId ? state.evidence.find((e) => e.id === mark.evidenceId) : null;
-        old = !!r && recordStatus(r, today) === 'expired';
-      }
-      if (old && !recheck.includes(item.label)) recheck.push(item.label);
+  for (const { strat, item } of set) {
+    const st = researchItemState(state, strat, item, lot.symbol, lot.exchange, now);
+    let old = st.status === 'expired';
+    if (st.status === 'broken') {
+      const mark = markOf(state, strat, item, lot.symbol, lot.exchange);
+      const r = mark?.evidenceId ? state.evidence.find((e) => e.id === mark.evidenceId) : null;
+      old = !!r && recordStatus(r, today) === 'expired';
     }
-  };
-  if (strategy) scan(strategy, strategy.items);
-  scan(MASTER_STRATEGY, MASTER_ITEMS);
+    if (old && !recheck.includes(item.label)) recheck.push(item.label);
+  }
   return { sell, recheck };
 }
 
