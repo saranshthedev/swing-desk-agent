@@ -20,3 +20,6 @@ export const EVIDENCE_KINDS = Object.freeze({
 });
 
 export const NEEDS_OWNER_CONFIRMATION = new Set(['quote', 'funding']);
+
+// Price-type kinds are specific to one exchange (NSE and BSE can differ), so records name it.
+export const EXCHANGE_KINDS = new Set(['quote', 'candles', 'zones']);

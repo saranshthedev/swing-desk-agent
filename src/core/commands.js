@@ -7,7 +7,8 @@ import { evaluate, orderTicket, planProblem, lotPlan } from './rules.js';
 import { estimateCosts, resolveMarginPct, FEE_DEFAULTS } from './fees.js';
 import { validateSchedule } from './schedule.js';
 import { daysBetween, indiaDate, isDate } from './time.js';
-import { EVIDENCE_KINDS, NEEDS_OWNER_CONFIRMATION } from './evidence.js';
+import { EVIDENCE_KINDS, EXCHANGE_KINDS, NEEDS_OWNER_CONFIRMATION } from './evidence.js';
+import { suggestGoodUntil } from './knowledge.js';
 import { validateStrategy } from './strategies.js';
 import { TRASH_KINDS, findItem } from './state.js';
 import { intentStatus } from './views.js';
@@ -122,6 +123,15 @@ function expiryDays(days = 30) {
 
 export function addEvidence(state, input, { actor, newId, now }) {
   if (input.confirms !== undefined) return confirmEvidence(state, input, { actor, newId, now });
+  const data = evidenceData(input, { actor, newId, now });
+  return { events: [{ type: 'evidence.added', data }], result: { id: data.id } };
+}
+
+/**
+ * Validates a new evidence record and returns its event data. Only the owner can set
+ * good-until: owner records count until then (default by kind); agent records never carry one.
+ */
+function evidenceData(input, { actor, newId, now }) {
   const kind = input.kind;
   if (!EVIDENCE_KINDS[kind]) throw new UserError(`Evidence kind must be one of: ${Object.keys(EVIDENCE_KINDS).join(', ')}.`);
   const observedAt = input.observedAt === undefined ? new Date(now).toISOString() : input.observedAt;
@@ -135,12 +145,73 @@ export function addEvidence(state, input, { actor, newId, now }) {
     summary: text(input.summary, 'Summary', 2_000, { required: kind !== 'quote' && kind !== 'funding' }),
     sources: sources(input.sources),
   };
+  if (EXCHANGE_KINDS.has(kind)) {
+    if (input.exchange !== 'NSE' && input.exchange !== 'BSE') throw new UserError('Say which exchange this is for: NSE or BSE.');
+    data.exchange = input.exchange;
+  }
+  if (input.topic !== undefined && input.topic !== '') data.topic = text(input.topic, 'Topic', 80);
+  if (input.verdict !== undefined) {
+    if (input.verdict !== 'good' && input.verdict !== 'bad') throw new UserError('The verdict must be good or bad.');
+    data.verdict = input.verdict;
+  }
   if (kind === 'quote') data.price = positive(input.price, 'Price');
   if (kind === 'funding') {
     data.marginPct = positive(resolveMarginPct({ buyType: 'mtf', marginPct: input.marginPct, leverage: input.leverage }), 'Own cash % (or leverage)');
     if (data.marginPct > 100) throw new UserError('Own cash % cannot be above 100.');
   }
-  return { events: [{ type: 'evidence.added', data }], result: { id: data.id } };
+  if (actor === 'owner') {
+    const observedDate = indiaDate(observedMs);
+    data.goodUntil = input.goodUntil === undefined ? suggestGoodUntil(kind, observedDate) : goodUntilDate(input.goodUntil, observedDate);
+  }
+  return data;
+}
+
+/** A good-until date no earlier than `from` (the record's India date, or today). */
+function goodUntilDate(value, from) {
+  if (!isDate(value)) throw new UserError('Good-until must be a date like 2026-10-30.');
+  if (value < from) throw new UserError(`Good-until cannot be before ${from}.`);
+  return value;
+}
+
+/** The record to act on: it must exist, not be in the Trash and not already be corrected. */
+function openRecord(state, id) {
+  const e = state.evidence.find((x) => x.id === id);
+  if (!e || e.trashed) throw new UserError('That record does not exist.');
+  if (e.correctedBy) throw new UserError('That record was already corrected. Use the newer one.');
+  return e;
+}
+
+/** The owner verifies an agent's record: it then counts until the good-until date. */
+export function verifyEvidence(state, input, { actor, now }) {
+  if (actor !== 'owner') throw new UserError('Only the owner can verify a record.');
+  const e = openRecord(state, input.id);
+  if (NEEDS_OWNER_CONFIRMATION.has(e.kind)) throw new UserError('Prices and MTF requirements are confirmed against Kite, not verified.');
+  const today = indiaDate(now);
+  const goodUntil = input.goodUntil === undefined
+    ? suggestGoodUntil(e.kind, today)
+    : goodUntilDate(input.goodUntil, today);
+  return { events: [{ type: 'evidence.verified', data: { id: e.id, goodUntil } }] };
+}
+
+/**
+ * The owner replaces a wrong record. The old one stays (marked corrected); the new one is an
+ * owner record, observed now unless said otherwise, that carries over what is not changed.
+ */
+export function correctEvidence(state, input, ctx) {
+  if (ctx.actor !== 'owner') throw new UserError('Only the owner can correct a record.');
+  const old = openRecord(state, input.corrects);
+  const reason = text(input.reason, 'Reason', 500);
+  const carried = {};
+  for (const k of ['summary', 'sources', 'topic', 'verdict', 'exchange', 'price', 'marginPct']) if (old[k] !== undefined) carried[k] = old[k];
+  const data = { ...evidenceData({ ...carried, ...input, kind: old.kind, symbol: old.symbol }, ctx), corrects: old.id, reason };
+  return { events: [{ type: 'evidence.corrected', data }], result: { id: data.id } };
+}
+
+/** Anyone with write access can say a record looks wrong. A flag only asks the owner to look. */
+export function flagEvidence(state, input) {
+  const e = state.evidence.find((x) => x.id === input.id);
+  if (!e || e.trashed) throw new UserError('That record does not exist.');
+  return { events: [{ type: 'evidence.flagged', data: { id: e.id, reason: text(input.reason, 'Reason', 500) } }] };
 }
 
 /**
@@ -162,6 +233,8 @@ function confirmEvidence(state, { confirms }, { actor, newId, now }) {
     summary: `Confirmed by owner against Kite. Found by ${source.by}${source.summary ? `: ${source.summary}` : ''}`.slice(0, 2_000),
     sources: source.sources,
     confirms: source.id,
+    ...(source.exchange ? { exchange: source.exchange } : {}),
+    goodUntil: indiaDate(now),
     ...(source.kind === 'quote' ? { price: source.price } : { marginPct: source.marginPct }),
   };
   return { events: [{ type: 'evidence.added', data }], result: { id: data.id } };

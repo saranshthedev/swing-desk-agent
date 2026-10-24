@@ -28,9 +28,9 @@ export function readyEvidence(d, symbol = 'ABC', agent, strategyId = 'breakout')
     const sym = i.scope === 'market' ? 'MARKET' : symbol;
     if (done.has(i.kind + sym)) continue;
     done.add(i.kind + sym);
-    by(C.addEvidence, { kind: i.kind, symbol: sym, summary: `Checked ${i.kind}` });
+    by(C.addEvidence, { kind: i.kind, symbol: sym, summary: `Checked ${i.kind}`, exchange: 'NSE' });
   }
-  d.owner(C.addEvidence, { kind: 'quote', symbol, price: 100.1 });
+  d.owner(C.addEvidence, { kind: 'quote', symbol, exchange: 'NSE', price: 100.1 });
   d.owner(C.addEvidence, { kind: 'funding', symbol, marginPct: 40, summary: 'Kite' });
 }
 

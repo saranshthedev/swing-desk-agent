@@ -51,7 +51,7 @@ test('items that affect money or waiting decisions cannot be trashed yet', () =>
 test('trashed evidence no longer counts for checks and cannot be confirmed', () => {
   const d = desk();
   const agent = d.addAgent('draft');
-  const { id } = agent.run(C.addEvidence, { kind: 'quote', symbol: 'ABC', price: 101 });
+  const { id } = agent.run(C.addEvidence, { kind: 'quote', symbol: 'ABC', exchange: 'NSE', price: 101 });
   d.owner(C.moveToTrash, { kind: 'evidence', id });
   assert.equal(d.store.read((s) => latestEvidence(s, 'quote', 'ABC')), null);
   assert.throws(() => d.owner(C.addEvidence, { confirms: id }), /can be confirmed/);

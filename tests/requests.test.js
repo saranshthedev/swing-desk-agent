@@ -34,7 +34,7 @@ test('agent-found prices count only after the owner confirms them, and only agen
   const d = desk();
   const agent = d.addAgent('propose');
   agent.run(C.addEvidence, { kind: 'news', symbol: 'ABC', summary: 'Nothing new' });
-  const { id: quoteId } = agent.run(C.addEvidence, { kind: 'quote', symbol: 'ABC', price: 100.2, summary: 'NSE site' });
+  const { id: quoteId } = agent.run(C.addEvidence, { kind: 'quote', symbol: 'ABC', exchange: 'NSE', price: 100.2, summary: 'NSE site' });
   const { id: fundingId } = agent.run(C.addEvidence, { kind: 'funding', symbol: 'ABC', marginPct: 40, summary: 'MTF list' });
   const { id } = buy(agent);
   let ev = checks(d, id);

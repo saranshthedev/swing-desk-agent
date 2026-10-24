@@ -170,6 +170,9 @@ export const TOOLS = {
     inputSchema: obj({
       kind: { type: 'string', enum: Object.keys(EVIDENCE_KINDS) },
       symbol,
+      exchange: { type: 'string', enum: ['NSE', 'BSE'], description: 'Required for quote, candles and zones: the exchange the price or chart is from.' },
+      topic: str('Optional: the checklist item id this answers, so the right check finds it', 80),
+      verdict: { type: 'string', enum: ['good', 'bad'], description: 'Optional: whether what you found is favourable (good) or a warning (bad).' },
       price: num('quote only: last traded price ₹'),
       marginPct: num('funding only: own cash % the broker requires for MTF (e.g. 30). Give this OR leverage.'),
       leverage: num('funding only: maximum MTF leverage the broker allows (e.g. 3.33). Give this OR marginPct.'),
@@ -178,7 +181,7 @@ export const TOOLS = {
       sources: { type: 'array', items: str('Link or source name', 500), maxItems: 10 },
     }, ['kind', 'symbol', 'summary']),
     run: (store, agent, args) => {
-      const { confirms, ...rest } = args; // confirming is owner-only
+      const { confirms, goodUntil, ...rest } = args; // confirming and good-until dates are owner-only
       return store.run(`agent:${agent.id}`, (s, ctx) => C.addEvidence(s, rest, ctx));
     },
   },

@@ -50,6 +50,22 @@ const reducers = {
   'agent.updated': (s, d) => { Object.assign(s.agents[d.id], d); },
 
   'evidence.added': (s, d, e) => { s.evidence.push({ ...d, by: e.actor, at: e.at }); },
+  'evidence.verified': (s, d, e) => {
+    const ev = s.evidence.find((x) => x.id === d.id);
+    ev.verifiedAt = e.at;
+    ev.goodUntil = d.goodUntil;
+  },
+  // The corrected record stays, marked; the new record points back with corrects = old id.
+  'evidence.corrected': (s, d, e) => {
+    s.evidence.push({ ...d, by: e.actor, at: e.at });
+    const old = s.evidence.find((x) => x.id === d.corrects);
+    old.correctedBy = d.id;
+    old.correctedAt = e.at;
+  },
+  'evidence.flagged': (s, d, e) => {
+    const ev = s.evidence.find((x) => x.id === d.id);
+    (ev.flags ??= []).push({ by: e.actor, at: e.at, reason: d.reason });
+  },
   'note.added': (s, d, e) => { s.notes.push({ ...d, by: e.actor, at: e.at }); },
 
   'intent.submitted': (s, d, e) => { s.intents[d.id] = { ...d, status: 'pending', by: e.actor, at: e.at }; },
@@ -104,7 +120,7 @@ export function findItem(state, kind, id) {
 export const live = (item) => !item.trashed;
 
 /** Event types an agent's daily write quota counts, and those its intent quota counts. */
-const WRITE_TYPES = new Set(['evidence.added', 'note.added', 'task.completed', 'task.failed']);
+const WRITE_TYPES = new Set(['evidence.added', 'evidence.flagged', 'note.added', 'task.completed', 'task.failed']);
 
 export function apply(state, event) {
   const reducer = reducers[event.type];
