@@ -98,3 +98,51 @@ test('a playbook task can be claimed, used for requests up to its limit, and com
   assert.equal(c.tool('complete_task', { taskId: task.task.id, summary: 'Done' }).isError, undefined);
   assert.equal(c.tool('next_task').structuredContent.result, null);
 });
+
+test('agents cannot verify, correct or mark; add_evidence ignores goodUntil and confirms but keeps exchange, topic, verdict', () => {
+  const d = desk();
+  const c = client(d, d.addAgent('propose').key);
+  for (const name of c.tools()) assert.doesNotMatch(name, /verify|correct|mark/);
+  const r = c.tool('add_evidence', { kind: 'quote', symbol: 'ABC', exchange: 'BSE', price: 100, summary: 'site', topic: 't1', verdict: 'good', goodUntil: '2099-01-01', confirms: 'ev_x' });
+  assert.equal(r.isError, undefined);
+  const e = d.store.read((s) => s.evidence[0]);
+  assert.equal(e.exchange, 'BSE');
+  assert.equal(e.topic, 't1');
+  assert.equal(e.verdict, 'good');
+  assert.equal(e.goodUntil, undefined);
+  assert.equal(e.confirms, undefined);
+  assert.equal(e.by.startsWith('agent:'), true);
+});
+
+test('flag_evidence and add_recommendation need draft access and count writes', () => {
+  const d = desk();
+  const read = client(d, d.addAgent('read').key);
+  assert.match(read.tool('flag_evidence', { id: 'x', reason: 'r' }).content[0].text, /needs draft access/);
+  assert.match(read.tool('add_recommendation', { symbol: 'ABC', exchange: 'NSE', call: 'wait', reasons: 'r' }).content[0].text, /needs draft access/);
+  const agent = d.addAgent('draft', { writesPerDay: 3 });
+  const c = client(d, agent.key);
+  const id = c.tool('add_evidence', { kind: 'news', symbol: 'ABC', summary: 's' }).structuredContent.id; // write 1
+  assert.equal(c.tool('flag_evidence', { id, reason: 'looks wrong' }).isError, undefined); // write 2
+  assert.equal(c.tool('add_recommendation', { symbol: 'ABC', exchange: 'NSE', call: 'wait', reasons: 'not ready', strategyIds: [] }).isError, undefined); // write 3
+  assert.match(c.tool('add_note', { title: 't', body: 'b' }).content[0].text, /Daily write limit/);
+});
+
+test('list_evidence filters by status and returns status; get_recommendation returns desk and agent views', () => {
+  const d = desk();
+  const agent = d.addAgent('draft');
+  const c = client(d, agent.key);
+  const a = c.tool('add_evidence', { kind: 'news', symbol: 'ABC', summary: 'one' }).structuredContent.id;
+  c.tool('add_evidence', { kind: 'news', symbol: 'ABC', summary: 'two' });
+  d.owner(C.verifyEvidence, { id: a });
+  const all = c.tool('list_evidence', { symbol: 'ABC' }).structuredContent.result;
+  assert.deepEqual(all.map((e) => e.status).sort(), ['found', 'verified']);
+  const ver = c.tool('list_evidence', { status: 'verified' }).structuredContent.result;
+  assert.deepEqual(ver.map((e) => e.id), [a]);
+  assert.equal(c.tool('list_evidence', { topic: 'nope' }).structuredContent.result.length, 0);
+  assert.equal(c.tool('list_evidence', { exchange: 'BSE' }).structuredContent.result.length, 0);
+  c.tool('add_recommendation', { symbol: 'ABC', exchange: 'NSE', call: 'wait', reasons: 'later' });
+  const rec = c.tool('get_recommendation', { symbol: 'abc', exchange: 'NSE' }).structuredContent;
+  assert.equal(rec.desk.call, 'wait');
+  assert.equal(rec.agent.call, 'wait');
+  assert.equal(c.tool('get_recommendation', { symbol: 'ABC', exchange: 'XX' }).isError, true);
+});

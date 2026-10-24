@@ -178,9 +178,9 @@ export function researchStatus(state, symbol, strategyId, exchange, now) {
   return { strategyId, strategyName: strategy.name, version: strategy.version, symbol, ...preparedStatus(state, strategy, symbol, exchange, now) };
 }
 
-const MASTER = { id: 'master', name: 'Master list', items: LIBRARY_ITEMS.map((i) => toStrategyItem(i)) };
+const MASTER = { id: 'master', name: 'Master list', items: LIBRARY_ITEMS.map((i) => toStrategyItem(i, { required: !!i.core })) };
 
-/** Every library item for a stock, with the default window (shown in Prepare; never gates approval). */
+/** Every library item for a stock, with the default window; “required” here means core (shown in Prepare; never gates approval). */
 export function masterStatus(state, symbol, exchange, now) {
   return { symbol, ...preparedStatus(state, MASTER, symbol, exchange, now) };
 }

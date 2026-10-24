@@ -10,7 +10,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const API_VERSION = 3;
+export const API_VERSION = 4;
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WATCHED = ['src', 'web'].map((d) => join(ROOT, d));

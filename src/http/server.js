@@ -15,7 +15,10 @@ import { SETTING_RULES, UserError } from '../core/settings.js';
 import { EVIDENCE_KINDS } from '../core/evidence.js';
 import { RULES } from '../core/strategies.js';
 import { LIBRARY_GROUPS, SOURCES, STAGES, WINDOW, MARKET } from '../core/checklist-library.js';
-import { researchStatus } from '../core/rules.js';
+import { researchStatus, masterStatus } from '../core/rules.js';
+import { recordStatus } from '../core/knowledge.js';
+import { deskRecommendation, latestRecommendation } from '../core/prepare.js';
+import { indiaDate } from '../core/time.js';
 import { RISK_PRESETS, AGENT_PRESETS, PLAYBOOK_TEMPLATES, PLAN_DEFAULTS, matchRiskPreset } from '../core/presets.js';
 import { newId } from '../store/store.js';
 import { backupDir } from '../config.js';
@@ -47,9 +50,21 @@ const ACTIONS = {
     return { id: body.id, key: store.issueKey(body.id) };
   }],
   'strategy.save': [true, owner(C.saveStrategy)],
-  'research.save': [false, owner(C.saveResearch)],
-  'research.status': [false, (store, body) => store.read((s, now) => researchStatus(s, String(body.symbol ?? '').trim().toUpperCase(), body.strategyId, body.exchange ?? 'NSE', now))],
   'prepare.mark': [false, owner(C.markPrepared)],
+  'prepare.status': [false, (store, body) => store.read((s, now) => {
+    const symbol = String(body.symbol ?? '').trim().toUpperCase();
+    const exchange = body.exchange ?? 'NSE';
+    if (exchange !== 'NSE' && exchange !== 'BSE') throw new UserError('Exchange must be NSE or BSE.');
+    return {
+      master: masterStatus(s, symbol, exchange, now),
+      strategies: Object.values(s.strategies).filter((x) => x.enabled && live(x)).map((x) => researchStatus(s, symbol, x.id, exchange, now)),
+      desk: deskRecommendation(s, symbol, exchange, now),
+      agent: latestRecommendation(s, symbol, exchange),
+    };
+  })],
+  'evidence.verify': [false, owner(C.verifyEvidence)],
+  'evidence.correct': [false, owner(C.correctEvidence)],
+  'evidence.flag': [false, owner(C.flagEvidence)],
   'playbook.save': [true, owner(C.savePlaybook)],
   'evidence.add': [false, owner(C.addEvidence)],
   'note.add': [false, owner(C.addNote)],
@@ -83,7 +98,8 @@ export function stateView(store) {
     agents: Object.values(s.agents).filter(live).map((a) => ({ ...a, usage: s.usage[`agent:${a.id}`] ?? {} })),
     intents: Object.values(s.intents).filter(live).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200).map((i) => intentView(s, i, now)),
     lots: Object.values(s.lots).filter(live).map(lotView).sort((a, b) => b.date.localeCompare(a.date)),
-    evidence: recentFirst(s.evidence, 200, live),
+    evidence: recentFirst(s.evidence, 200, live).map((e) => ({ ...e, status: recordStatus(e, indiaDate(now)) })),
+    recommendations: recentFirst(s.recommendations, 100, live),
     notes: recentFirst(s.notes, 100, live),
     playbooks: Object.values(s.playbooks).filter(live),
     tasks: Object.values(s.tasks).filter(live).sort((a, b) => b.dueAt.localeCompare(a.dueAt)).slice(0, 50),
@@ -95,7 +111,7 @@ export function stateView(store) {
       settingRules: SETTING_RULES,
       evidenceKinds: EVIDENCE_KINDS,
       ruleKinds: Object.keys(RULES),
-      checklist: { groups: LIBRARY_GROUPS, sources: SOURCES, stages: STAGES, researchValidDays: WINDOW.defaultExpire, market: MARKET },
+      checklist: { groups: LIBRARY_GROUPS, sources: SOURCES, stages: STAGES, window: WINDOW, market: MARKET },
       presets: {
         risk: RISK_PRESETS,
         currentRisk: matchRiskPreset(s.settings),

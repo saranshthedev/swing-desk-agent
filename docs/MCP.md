@@ -35,11 +35,11 @@ Open the desk → **Agents & MCP** → *Add an agent*. Pick the lowest access th
 | Level | Can do |
 |---|---|
 | off | `whoami` only |
-| read | Read status, strategies, lots, requests, evidence, notes; run `calculate_plan`; take and finish playbook tasks |
-| draft | read + `add_note`, `add_evidence` (price, MTF requirement, news, candles, calendar, other) |
+| read | Read status, strategies, lots, requests, evidence, notes, recommendations (`get_recommendation`); run `calculate_plan`; take and finish playbook tasks |
+| draft | read + `add_note`, `add_evidence` (price, MTF requirement, news, candles, calendar, other), `flag_evidence`, `add_recommendation` |
 | propose | draft + `propose_buy`, `propose_exit`, `propose_settings`, `withdraw_request` |
 
-No level can approve, place orders, change access, edit strategies or playbooks, or delete history.
+No level can approve, verify or correct records, mark research prepared, place orders, change access, edit strategies or playbooks, or delete history.
 
 The key is shown once. The page also shows the exact config block to paste.
 
@@ -68,10 +68,22 @@ shell commands can bypass MCP limits; give such apps a low level or no key.
 ## The checklist and its two stages
 
 `get_checklist_library` returns every pre-trade check (15 groups, 107 checks) with plain help and
-free places to look. Each check has a stage: **research** (can be done 1–5 days before) or
-**before** (on the day). `get_research_status` shows, for one stock and strategy, what already
-passes and what still needs evidence or the owner’s answer. Only the owner can tick “you answer”
-items; research ticks stay valid for 5 days.
+free places to look. Each check has a stage: **research** (prepared by the owner days ahead) or
+**before** (on the day). Each strategy sets its own **buffer** (days a prepared item must wait
+before it counts) and **expire** (days it stays valid). `get_research_status` shows, for one
+stock, strategy and exchange, what already passes and what still needs a record or the owner's
+preparation. Only the owner prepares research items.
+
+### Read the store first
+
+Every evidence check needs an owner-entered or owner-verified record. Before searching the web,
+call `list_evidence` with `status: "verified"` (and `symbol`, `topic`, `exchange` if useful) and
+reuse what is there. Add a record with `add_evidence` only for what is missing or out of date.
+Your records start as **found**; they count only after the owner verifies them. Verifying,
+correcting and marking research prepared are owner-only: no tool does them, and `add_evidence`
+ignores `goodUntil` and `confirms`. If a record looks wrong, call `flag_evidence` (it only asks
+the owner to look). `add_recommendation` stores your wait / buy / hold / sell view with reasons;
+`get_recommendation` returns it next to the desk's own view. Neither has any effect on approval.
 
 Market-wide facts – Nifty and VIX, US and Asian markets, crude oil, USDINR, FII/DII flows – are saved
 once a day with `add_evidence` (kind `macro`) under the symbol **MARKET** and count for every stock.
@@ -85,6 +97,11 @@ and records it with `add_evidence`, always with sources and the time it was obse
 Prices (`quote`) and MTF requirements (`funding`) are shown to the owner with a one-click
 **confirm** button. They count toward approval only after the owner checks Kite shows the same,
 and only for 5 minutes (prices) or the same India day (MTF) from that confirmation.
+
+The tools: `whoami`, `desk_status`, `list_strategies`, `get_checklist_library`, `get_research_status`,
+`get_recommendation`, `list_lots`, `list_requests`, `get_request`, `calculate_plan`, `list_evidence`,
+`list_notes`, `next_task`, `complete_task`, `fail_task`, `add_note`, `add_evidence`, `flag_evidence`,
+`add_recommendation`, `propose_buy`, `propose_exit`, `propose_settings`, `withdraw_request`.
 
 ## Automate with playbooks
 

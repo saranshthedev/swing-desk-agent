@@ -196,7 +196,7 @@ export function deskRecommendation(state, symbol, exchange, now) {
   }
 
   const masterMissing = masterStatus(state, symbol, exchange, now).checks
-    .filter((c) => c.required && c.stage === 'research' && CORE_IDS.has(String(c.id).slice(5)) && c.status !== 'pass' && c.status !== 'info');
+    .filter((c) => c.required && c.stage === 'research' && c.status !== 'pass' && c.status !== 'info');
   const fitting = strategies.filter((s) => s.fits);
   if (!masterMissing.length && fitting.length) {
     return out('buy', [`All core master research is inside its window, and ${fitting.map((s) => s.name).join(', ')} ${fitting.length > 1 ? 'have' : 'has'} its research done and past the wait.`]);
