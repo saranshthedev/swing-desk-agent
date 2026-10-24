@@ -155,3 +155,10 @@ test('owner confirmation of a quote is a new record good for today, same exchang
 test('old owner records without goodUntil are found', () => {
   assert.equal(recordStatus({ by: 'owner', kind: 'news' }, '2026-10-23'), 'found');
 });
+
+test('a corrected agent quote cannot be confirmed', () => {
+  const d = desk();
+  const q = d.addAgent('draft').run(C.addEvidence, { kind: 'quote', symbol: 'ABC', exchange: 'NSE', price: 100 });
+  d.owner(C.correctEvidence, { corrects: q.id, reason: 'wrong price', price: 101 });
+  assert.throws(() => d.owner(C.addEvidence, { kind: 'quote', symbol: 'ABC', confirms: q.id }), /already corrected/);
+});

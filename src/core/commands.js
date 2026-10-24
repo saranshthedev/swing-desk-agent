@@ -225,6 +225,7 @@ function confirmEvidence(state, { confirms }, { actor, newId, now }) {
   if (!source || source.trashed || !NEEDS_OWNER_CONFIRMATION.has(source.kind) || source.by === 'owner') {
     throw new UserError('Only an agent’s price or MTF requirement can be confirmed.');
   }
+  if (source.correctedBy) throw new UserError('That record was already corrected. Use the newer one.');
   const data = {
     id: newId('ev'),
     kind: source.kind,
