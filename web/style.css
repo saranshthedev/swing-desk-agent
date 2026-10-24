@@ -231,3 +231,10 @@ td { padding: 10px 8px; border-top: 1px solid var(--line-2); vertical-align: top
 @media (max-width: 700px) { .rows > li { flex-wrap: wrap; row-gap: 2px; } }
 .cl-group-grid .cl-group > summary { flex-wrap: nowrap; align-items: baseline; }
 .cl-group-grid .cl-group-title { flex: 0 1 auto; }
+
+/* TradingView chart (opened on demand) */
+.tv-chart > summary { cursor: pointer; font-weight: 600; min-height: 32px; }
+.tv-chart > p { margin: 8px 0; }
+.tv-frame { height: 520px; }
+.tv-frame .tradingview-widget-container, .tv-frame .tradingview-widget-container__widget { height: 100%; width: 100%; }
+@media (max-width: 700px) { .tv-frame { height: 380px; } }

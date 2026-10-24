@@ -239,8 +239,9 @@ const pages = {
     const head = `<header class="page-head"><div><a href="#/requests">Back to requests</a><h1>${esc(title)} <span class="tag tag-muted">${esc(i.status)}</span></h1>
       <p class="muted">From ${byLine(i.by)} · ${when(i.at)}${i.status === 'pending' ? ` · expires ${when(i.expiresAt)}` : ''}${i.strategyName ? ` · strategy: ${esc(i.strategyName)}` : ''}</p></div></header>`;
     const thesis = `<section class="card"><h2>Reason given</h2>${i.by === 'owner' ? '' : '<p class="small"><span class="tag tag-warn">Written by a model · not verified</span></p>'}<blockquote>${esc(i.thesis)}</blockquote>${evidenceFor(i)}</section>`;
-    if (i.status === 'pending') return head + pendingRequest(i) + thesis;
-    return head + decidedRequest(i) + thesis;
+    const chart = i.symbol ? tvChart(i.symbol) : '';
+    if (i.status === 'pending') return head + pendingRequest(i) + thesis + chart;
+    return head + decidedRequest(i) + thesis + chart;
   },
 
   plan() {
@@ -344,6 +345,7 @@ const pages = {
             ${checklistHtml(research, { checklist: S.meta.checklist, esc, tag, answer: 'research' })}
             <button class="btn primary">Save research</button>
           </form>
+          ${tvChart(sym)}
           <section class="card"><h2>Later, on the day</h2><p class="small muted">These are checked just before buying, on the request page. Shown here so you know what is coming.</p>
             ${checklistHtml(today, { checklist: S.meta.checklist, esc, tag })}</section>
           <section class="card"><h2>Let Claude do the research</h2><p class="small">Ask Claude Code:</p>
@@ -502,6 +504,36 @@ function sourcesList(list) {
   if (!list?.length) return '';
   return `<div class="small">${list.map((s) => /^https?:\/\//.test(s) ? `<a href="${esc(s)}" rel="noopener noreferrer" target="_blank">${esc(s)}</a>` : esc(s)).join(' · ')}</div>`;
 }
+
+/**
+ * TradingView chart, loaded only when the owner opens it. It is for looking, never evidence for a check.
+ * TradingView does not allow NSE data in charts embedded on other sites, so the embed shows the BSE
+ * listing and links to the NSE chart on tradingview.com.
+ */
+function tvChart(symbol) {
+  const sym = esc(encodeURIComponent(symbol));
+  return `<details class="card tv-chart" data-tv-symbol="${esc(`BSE:${symbol}`)}"><summary>TradingView chart · BSE:${esc(symbol)}</summary>
+    <p class="small muted">Opening this loads TradingView’s chart from tradingview.com, which then sees the stock you view. TradingView only allows BSE prices in charts shown inside other apps, so this is the BSE listing; NSE prices can differ slightly. If the BSE code is different, search for the stock in the chart. It is for looking only: nothing on it counts as evidence for a check. Confirm prices in Kite before you buy.</p>
+    <div class="tv-frame"></div>
+    <p class="small muted"><a href="https://www.tradingview.com/chart/?symbol=NSE%3A${sym}" rel="noopener noreferrer" target="_blank">Open the NSE chart on tradingview.com</a> · Chart by TradingView</p></details>`;
+}
+
+document.addEventListener('toggle', (e) => {
+  const box = e.target;
+  if (!box.matches?.('details.tv-chart') || !box.open || box.dataset.loaded) return;
+  box.dataset.loaded = '1';
+  const host = box.querySelector('.tv-frame');
+  host.innerHTML = '<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div></div>';
+  const script = document.createElement('script');
+  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+  script.async = true;
+  script.textContent = JSON.stringify({
+    autosize: true, symbol: box.dataset.tvSymbol, interval: 'D', timezone: 'Asia/Kolkata',
+    theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light', style: '1', locale: 'en',
+    allow_symbol_change: true, calendar: false, support_host: 'https://www.tradingview.com',
+  });
+  host.firstElementChild.append(script);
+}, true);
 
 function agentRow(a) {
   const u = a.usage[S.status.today] ?? { writes: 0, intents: 0 };
