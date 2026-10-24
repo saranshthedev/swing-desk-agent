@@ -136,17 +136,17 @@ legend { font-weight: 600; padding: 0 4px; }
 
 /* Field labels with an “i” help button */
 .field-label { display: block; min-height: 28px; line-height: 1.4; padding-top: 4px; position: relative; }
-.field-label .info { display: inline-grid; place-items: center; margin-left: 6px; vertical-align: -3px; }
+.field-label .info { display: inline-grid; place-items: center; margin-left: 5px; vertical-align: -2px; }
 .field-label > .tip { top: 100%; left: 0; }
 fieldset, .card, [data-info] { position: relative; }
 legend .info, h2 .info, h3 .info { margin-left: 6px; vertical-align: middle; }
 .info {
-  flex: none; width: 20px; height: 20px; padding: 0; border-radius: 50%;
-  border: 1.5px solid var(--accent); background: var(--surface); color: var(--accent);
-  font: italic 600 12px/1 Georgia, "Times New Roman", serif; cursor: help; position: relative; align-self: center;
+  flex: none; width: 16px; height: 16px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--accent); background: var(--surface); color: var(--accent);
+  font: italic 600 10px/1 Georgia, "Times New Roman", serif; cursor: help; position: relative; align-self: center;
 }
-.info::after { content: ""; position: absolute; inset: -12px; } /* 44 px touch area */
-@media (pointer: coarse) { .info { width: 24px; height: 24px; font-size: 13px; } .info::after { inset: -10px; } }
+.info::after { content: ""; position: absolute; inset: -14px; } /* 44 px touch area */
+@media (pointer: coarse) { .info { width: 18px; height: 18px; font-size: 11px; } .info::after { inset: -13px; } }
 .info:hover { background: var(--ask-bg); }
 .info[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
 .tip { position: absolute; z-index: 40; margin: 4px 0 0; width: max-content; max-width: min(340px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); box-shadow: 0 8px 24px rgb(15 22 38 / 0.18); font-size: 14px; font-weight: 400; line-height: 1.45; white-space: normal; }
