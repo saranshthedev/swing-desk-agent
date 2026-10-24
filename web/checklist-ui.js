@@ -7,9 +7,10 @@ const CHECK_TYPE = { attest: 'You answer', evidence: 'Needs evidence', rule: 'Ap
 
 /**
  * checks: [{ id, label, status, detail, required, group, stage, help }]
- * opts: { checklist (meta), esc, tag, answer: null | 'ask' | 'research', note }
- *   answer 'ask'      → checkbox on every item waiting for your answer (approval)
- *   answer 'research' → checkbox on research-stage “you answer” items, ticked if already answered
+ * opts: { checklist (meta), esc, tag, answer: null | 'ask', extra }
+ *   answer 'ask' → checkbox on every item waiting for your answer (on-the-day items at approval).
+ *                  Research items are never ticked here: they come from the Prepare page.
+ *   extra(check) → optional HTML added under an item (buttons, records, small forms)
  */
 export function checklistHtml(checks, opts) {
   const { checklist, esc } = opts;
@@ -52,15 +53,16 @@ function groupHtml(gid, items, opts) {
   </details>`;
 }
 
-function itemHtml(c, { esc, tag, answer }) {
+function itemHtml(c, { esc, tag, answer, extra }) {
   const key = c.id.replace(/^item:/, '');
-  const box = (answer === 'ask' && c.status === 'ask')
-    || (answer === 'research' && c.stage === 'research' && c.type === 'attest');
+  const box = answer === 'ask' && c.status === 'ask';
   const head = `${tag(c.status)} <b>${esc(c.label)}</b>${c.required ? '' : ' <span class="muted small">(optional)</span>'}`;
   const body = `<div class="small muted">${esc(c.detail)}</div>${c.help && c.help !== c.detail ? `<div class="small cl-help">${esc(c.help)}</div>` : ''}`;
+  const more = extra?.(c) ?? '';
+  const attrs = `data-check="${esc(key)}" data-stage="${esc(c.stage ?? 'before')}"`;
   return box
-    ? `<li><label class="check cl-answer"><input type="checkbox" name="answer:${esc(key)}" ${answer === 'research' && c.status === 'pass' ? 'checked' : ''}><span>${head}${body}</span></label></li>`
-    : `<li><div>${head}${body}</div></li>`;
+    ? `<li ${attrs}><label class="check cl-answer"><input type="checkbox" name="answer:${esc(key)}"><span>${head}${body}</span></label>${more}</li>`
+    : `<li ${attrs}><div>${head}${body}${more}</div></li>`;
 }
 
 /** Library view (no statuses): stage tag, label, help, where to look. */

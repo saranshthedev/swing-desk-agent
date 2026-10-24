@@ -31,9 +31,15 @@ export const INFO = {
   days: 'The longest you plan to hold, in calendar days. MTF interest is charged for every day you hold.',
   thesis: 'In your own words, why this trade. You will be glad to read it later.',
 
-  // ---------- research ----------
-  kind: 'What sort of proof this is: news, the daily chart (candles), results dates, or something else.',
+  // ---------- records ----------
+  kind: 'What sort of record this is: news, the daily chart (candles), results dates, or something else.',
   source: 'A link where you found it, so you or Claude can check it again.',
+  goodUntil: 'The last India date this record is still true. After it, it stops counting and must be checked again. Example: quarterly results are good until the next results date; a chart reading for about 5 days.',
+  reason: 'Why the old record was wrong, in a few words. Example: “Promoter holding is 58%, not 62%”.',
+  records: 'Everything saved about this stock. Verified records count; records Claude found count only after you verify them. Corrected records stay here, marked, and no longer count.',
+  verify: 'Verify means: you checked Claude’s record and it is right. It then counts until its good-until date. Prices and MTF requirements are confirmed against Kite instead.',
+  correct: 'Correct a wrong record. The old one stays in the history, marked corrected, and stops counting. Research you prepared with it must be prepared again, and its wait starts again.',
+  flag: 'Claude thinks this record may be wrong or out of date. A flag changes nothing by itself. Look at it, and correct the record if it is really wrong.',
 
   // ---------- agents ----------
   name: 'A name you will recognise, for example “Claude research”.',
@@ -69,7 +75,11 @@ export const INFO = {
   maxAgeDays: 'How old the proof may be, in days. 0 means it must be from today.',
   required: 'Ticked: the trade cannot be approved without this. Not ticked: shown only as a note.',
   group: 'Which heading this check sits under, like “Company fundamentals”. A group is done only when all its required checks pass.',
-  stage: 'Research: can be done 1–5 days before and saved on the Prepare page. Just before buying: must be checked on the day.',
+  stage: 'Research: done on the Prepare page days before; it counts only after the strategy’s buffer days and until its expire days. Just before buying: checked on the day, on the request page.',
+  bufferDays: 'How many days a prepared research item must wait before it counts. At least 3, so you never buy on the day you first look. Example: buffer 3 and you tick it on Monday: it counts from Thursday.',
+  expireDays: 'How many days after you prepare an item it still counts. At most 21. Example: buffer 3, expire 5: research ticked on Monday counts Thursday to Saturday, then must be prepared again.',
+  window: 'Research must age before it counts, and stops counting later. This cools you off: no buying on the day you first see a price move. Example: buffer 3, expire 5: ticked on Monday counts Thursday to Saturday.',
+  exchangeBound: 'Tick for checks that read prices or charts (trend, zones, volume). They count only on the exchange you prepared them on: an NSE chart reading does not count for a BSE buy.',
   scope: 'This stock: proof is needed for each stock. Whole market: saved once a day under MARKET (for Nifty, oil, USDINR…) and counts for every stock.',
   libraryPick: 'Pick ready-made checks from the full pre-trade list. Choose a group to add all its checks at once.',
 };
@@ -88,7 +98,7 @@ export const INFO_IN = {
     date: 'The day the sale happened.',
     charges: 'All charges for this sale from the contract note, plus MTF interest. Leave empty and the app will estimate them.',
   },
-  quote: { price: 'The price Kite shows right now. It counts for 5 minutes only.' },
+  quote: { price: 'The price Kite shows right now. It counts for 5 minutes only.', exchange: 'NSE or BSE: the exchange whose price you copied. A plan uses only prices from its own exchange.' },
   funding: {
     summary: 'Where you checked, for example “Kite MTF list”.',
     fundingMode: 'Kite may show leverage (like 3×) or own cash (like 33%). Choose the one you see.',
@@ -97,10 +107,24 @@ export const INFO_IN = {
   evidence: {
     summary: 'What you found, in a few words. Example: “No news today. Results on 20 Nov.”',
     symbol: 'The stock’s name as in Kite. For whole-market checks (Nifty, VIX, oil, USDINR, US markets) type MARKET.',
+    exchange: 'Only prices and chart readings (quote, candles, zones) keep an exchange, because NSE and BSE prices can differ. Other kinds ignore it.',
+    goodUntil: 'The last India date this stays true. Leave it empty and the desk picks: chart readings 5 days, fundamentals 90, market-wide 7, news today only.',
+  },
+  'prep-evidence': {
+    summary: 'What you found, in a few words. Example: “Promoter 62%, no pledge, from the latest shareholding filing.”',
+    exchange: 'The exchange this price or chart is from. Only records from the exchange you are preparing count.',
+    goodUntil: 'The last India date this stays true. Already filled with the usual length for this kind; change it if you know better, e.g. the next results date.',
+  },
+  correct: {
+    summary: 'The right text. It replaces the old record from now on; the old one stays in the history.',
+    price: 'The right price from Kite, in rupees. Example: ₹512.40.',
+    marginPct: 'The right own-cash % for MTF from Kite. Example: 40 means you pay 40% and borrow 60%.',
+    exchange: 'The exchange the corrected price or chart is from.',
+    goodUntil: 'The last India date the corrected record stays true. Empty: the desk picks by kind.',
   },
   'stock-pick': { symbol: 'The stock’s name as in Kite, for example TATAMOTORS. Type MARKET for whole-market checks.' },
   note: { title: 'A short heading, for example “Watch the 580 level”.', body: 'Anything you want to remember about this stock. Connected agents with Read access can see notes.' },
-  'prepare-pick': { symbol: 'The stock you are thinking of buying in the next few days.', strategyId: 'Which strategy’s checklist to use. Each one has its own research list.' },
+  'prepare-pick': { symbol: 'The stock you are thinking of buying in the next few days.', exchange: 'Prepare on one exchange at a time, usually NSE. Price and chart items count only on the exchange you prepared them on.' },
   stop: { stop: 'Your new stop price. Moving it up locks in profit; moving it down adds risk.' },
   reject: { reason: 'Optional. Why you said no, so you and the AI can learn.' },
   playbook: { name: 'A short name for this job, for example “Morning news check”.' },

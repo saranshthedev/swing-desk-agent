@@ -11,6 +11,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import net from 'node:net';
 import readline from 'node:readline';
+import { Store } from '../src/store/store.js';
+import * as C from '../src/core/commands.js';
+import { EXCHANGE_KINDS } from '../src/core/evidence.js';
 
 const root = resolve(import.meta.dirname, '..');
 const shots = process.argv[2] ? resolve(process.argv[2]) : null;
@@ -47,6 +50,25 @@ const env = { ...process.env, SWING_DESK_DATA: join(temp, 'data'), SWING_DESK_PO
 const base = `http://127.0.0.1:${env.SWING_DESK_PORT}`;
 let server, browser, mcp;
 const errors = [];
+
+// Stage 1 happened three days ago: before the server starts, the owner prepared every required
+// research item of Breakout for SAMPLE on NSE (evidence items on records the owner entered).
+// The store's own clock is set back; the server itself runs on real time.
+{
+  const threeDaysAgo = Date.now() - 3 * 86_400_000;
+  const seed = new Store(join(env.SWING_DESK_DATA, 'desk.sqlite'), { clock: () => threeDaysAgo });
+  const owner = (fn, input) => seed.run('owner', (s, ctx) => fn(s, input, ctx));
+  const items = seed.read((s) => s.strategies.breakout.items.filter((i) => i.stage === 'research' && i.required && (i.type === 'attest' || i.type === 'evidence')));
+  for (const item of items) {
+    let evidenceId;
+    if (item.type === 'evidence') {
+      const symbol = item.scope === 'market' ? 'MARKET' : 'SAMPLE';
+      evidenceId = owner(C.addEvidence, { kind: item.kind, symbol, topic: item.id, summary: `Synthetic ${item.kind} check for testing`, sources: ['https://example.com/source'], ...(EXCHANGE_KINDS.has(item.kind) ? { exchange: 'NSE' } : {}) }).id;
+    }
+    owner(C.markPrepared, { symbol: 'SAMPLE', strategyId: 'breakout', itemId: item.id, exchange: 'NSE', evidenceId, yes: true });
+  }
+  seed.close();
+}
 
 try {
   server = spawn(process.execPath, [join(root, 'bin/desk.js'), 'start'], { env, stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true });
@@ -160,47 +182,82 @@ try {
     return r.structuredContent;
   };
   await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'browser-check', version: '1' } });
-  // Claude researches: per-stock evidence, plus market-wide checks saved once under MARKET.
-  for (const [kind, summary] of [['news', 'No adverse news today'], ['candles', 'Closed above 20-day high on 2.1× volume'], ['calendar', 'Results in four weeks'],
-    ['zones', 'Weekly uptrend; nearest weekly supply at 580'], ['sector', 'Sector index beat Nifty over 3 months'], ['fundamentals', 'Sales +18% a year; promoter 62%, no pledge']]) {
-    await tool('add_evidence', { kind, symbol: 'SAMPLE', summary, sources: ['https://example.com/source'] });
-  }
+  // Today, Claude gathers the on-the-day checks (found, not verified): news, the daily chart on
+  // NSE, and the whole-market check under MARKET. One research-type find stays for Today's card.
+  await tool('add_evidence', { kind: 'news', symbol: 'SAMPLE', summary: 'No adverse news today', sources: ['https://example.com/source'] });
+  await tool('add_evidence', { kind: 'candles', symbol: 'SAMPLE', exchange: 'NSE', summary: 'Closed above 20-day high on 2.1× volume', sources: ['https://example.com/source'] });
   await tool('add_evidence', { kind: 'macro', symbol: 'MARKET', summary: 'Nifty uptrend, VIX 13, US flat, Brent $78, USDINR 83.9 steady', sources: ['https://example.com/markets'] });
-  const status = await tool('get_research_status', { symbol: 'SAMPLE', strategyId: 'breakout' });
-  assert.ok(status.checks.filter((c) => c.type === 'evidence').every((c) => c.status === 'pass'), 'all evidence items pass after research');
-  await tool('add_evidence', { kind: 'quote', symbol: 'SAMPLE', price: 500.5, summary: 'Public exchange page' });
+  await tool('add_evidence', { kind: 'sector', symbol: 'SAMPLE', summary: 'Sector index beat Nifty over 3 months', sources: ['https://example.com/source'] });
+  const status = await tool('get_research_status', { symbol: 'SAMPLE', strategyId: 'breakout', exchange: 'NSE' });
+  assert.ok(status.researchDone, 'research prepared three days ago counts today');
+  // Claude flags one of the owner's records, and stores its own call, different from the desk's.
+  const [ownerRecord] = await tool('list_evidence', { symbol: 'SAMPLE', status: 'verified', limit: 1 }).then((r) => r.result);
+  await tool('flag_evidence', { id: ownerRecord.id, reason: 'Synthetic flag: the promoter figure may be out of date' });
+  const views = await tool('get_recommendation', { symbol: 'SAMPLE', exchange: 'NSE' });
+  const agentCall = views.desk.call === 'buy' ? 'wait' : 'buy';
+  await tool('add_recommendation', { symbol: 'SAMPLE', exchange: 'NSE', call: agentCall, strategyIds: ['breakout'], reasons: 'Synthetic recommendation for testing', sources: ['https://example.com/source'] });
+  await tool('add_evidence', { kind: 'quote', symbol: 'SAMPLE', exchange: 'NSE', price: 500.5, summary: 'Public exchange page' });
   await tool('add_evidence', { kind: 'funding', symbol: 'SAMPLE', marginPct: 40, summary: 'Broker MTF list page' });
-  const proposed = await tool('propose_buy', { symbol: 'SAMPLE', strategyId: 'breakout', thesis: 'Synthetic breakout for testing', claims: { 'volume-signal': '2.1× the 20-day average' }, plan: { buyType: 'mtf', marginPct: 50, entry: 500, stop: 485, target: 560, days: 10 } });
+  const proposed = await tool('propose_buy', { symbol: 'SAMPLE', strategyId: 'breakout', thesis: 'Synthetic breakout for testing', claims: { 'volume-signal': '2.1× the 20-day average' }, plan: { exchange: 'NSE', buyType: 'mtf', marginPct: 50, entry: 500, stop: 485, target: 560, days: 10 } });
 
-  // Stage 1: the owner ticks research items on the Prepare page (valid 5 days).
-  await go('#/prepare/breakout/SAMPLE');
-  await waitText('Research not finished');
+  // The sidebar has no Research page; old links land on Stocks.
+  assert.equal(await js('!!document.querySelector(".side a[href=\\"#/research\\"]")'), false, 'no Research link');
+  assert.deepEqual(await js('[...document.querySelectorAll(".side a")].slice(0, 6).map((a) => a.dataset.route)'), ['today', 'stocks', 'prepare', 'plan', 'requests', 'positions']);
+  await go('#/research');
+  await until(() => js('location.hash === "#/stocks"'), '#/research lands on Stocks');
+  await waitText('Your stocks');
+
+  // Prepare: one exchange at a time; the master list, each strategy, and both recommendations.
+  await js('location.reload()');
+  await until(() => js('!!document.querySelector("#pending-count")'), 'reloaded');
+  await go('#/prepare/SAMPLE');
+  await until(() => js('!!document.querySelector(".prep-master")'), 'Prepare master list');
+  assert.equal(await js('document.querySelector("form[data-form=prepare-pick]").elements.exchange.value'), 'NSE');
+  assert.ok(await js('document.querySelectorAll(".prep-strategy").length') >= 1, 'per-strategy lists');
+  assert.match(await js('document.querySelector(".prep-strategy").textContent'), /Breakout/);
+  assert.equal(await js('document.querySelectorAll(".rec-grid > .rec").length'), 2);
+  assert.equal(await js('(() => { const [a, b] = document.querySelectorAll(".rec-grid > .rec"); return a.getBoundingClientRect().top === b.getBoundingClientRect().top; })()'), true, 'recommendation cards side by side');
+  const recs = await js('document.querySelector(".rec-grid").textContent');
+  assert.match(recs, /Desk rules/);
+  assert.match(recs, /Claude \(written by a model · not verified\)/);
+  assert.match(await text(), /The desk and Claude disagree/);
+  assert.doesNotMatch(await text(), /you should/i);
+  assert.match(await js('document.querySelector(".bse-note")?.textContent ?? ""'), /BSE/);
+  await shot('prepare');
   await shot('prepare', 390);
-  await js('[...document.querySelectorAll("form[data-form=research] input[type=checkbox]")].filter((b) => b.name.startsWith("answer:")).forEach((b) => { b.checked = true; })');
-  await submit('research', {});
-  assert.match(await toast(), /Research saved/);
-  await waitText('Research done');
+  // Marking a research item starts its wait.
+  await click('.prep-master [data-action=prepare-mark][data-yes="1"]');
+  assert.match(await toast(), /Marked as checked/);
+  // An inline record saved on Prepare is used for its item at once.
+  await until(() => js('!!document.querySelector(".prep-master form[data-form=prep-evidence]")'), 'inline record form');
+  await submit('prep-evidence', { summary: 'Synthetic inline record' }, { nth: 0 });
+  assert.match(await toast(), /Record saved and used/);
 
   // Owner reviews the agent's request in the browser.
-  await js('location.reload()');
-  await until(() => js('document.querySelector("#pending-count")?.textContent === "1"'), 'pending count');
   await go(`#/request/${proposed.id}`);
   await waitText('The plan, recalculated by the desk');
   assert.match(await text(), /Written by a model · not verified/);
   assert.match(await text(), /found ₹500\.50/);
+  // Research items are read-only here: they show when they were prepared and have no tick box.
+  const all = () => js('document.querySelector("main").textContent');
+  assert.match(await all(), /Prepared on \d{4}-\d{2}-\d{2}/);
+  const researchIds = await js('[...document.querySelectorAll("li[data-stage=research]")].map((li) => li.dataset.check)');
+  assert.ok(researchIds.length > 0, 'research items listed');
+  const boxes = await js('[...document.querySelectorAll("form[data-form=approve] input[type=checkbox]")].filter((b) => b.name.startsWith("answer:")).map((b) => b.name.slice(7))');
+  assert.ok(boxes.length > 0 && boxes.every((b) => !researchIds.includes(b)), 'research items have no tick boxes');
+  assert.ok(await js('!!document.querySelector("[data-action=verify-evidence]")'), 'agent records show a Verify button');
   await shot('request-pending');
   await shot('request-pending', 390);
 
   await submit('approve', { pin: '24681357' });
   assert.match(await toast(), /Not ready to approve/);
-  await js('[...document.querySelectorAll("[data-action=confirm-evidence]")].forEach((b) => b.click())');
-  await until(async () => !(await js('!!document.querySelector("[data-action=confirm-evidence]")')), 'confirmations');
+  // On the day: verify Claude's finds, confirm price and MTF against Kite, tick the on-the-day items.
+  await until(async () => {
+    const b = await js('(() => { const b = document.querySelector("form[data-form=approve] [data-action=verify-evidence], [data-action=confirm-evidence]"); if (b && !b.disabled) { b.click(); return "clicked"; } return b ? "busy" : "done"; })()');
+    if (b !== 'done') await delay(250);
+    return b === 'done';
+  }, 'verifications and confirmations', 20_000);
   await until(async () => (await text()).includes('Fresh price from your broker') && !(await text()).includes('An agent found ₹500.5'), 'quote check updated');
-  // Stage 2: research answers already count; only on-the-day items still need ticking.
-  // Passed groups start collapsed, so read the full text, not just what is visible.
-  assert.match(await js('document.querySelector("main").textContent'), /You checked this in research on/);
-  const boxes = await js('[...document.querySelectorAll("form[data-form=approve] input[type=checkbox]")].filter((b) => b.name.startsWith("answer:")).map((b) => b.name)');
-  assert.ok(boxes.length > 0 && !boxes.includes('answer:fund-debt'), 'research items are not asked again');
   await js('[...document.querySelectorAll("form[data-form=approve] input[type=checkbox]")].filter((b) => b.name.startsWith("answer:")).forEach((b) => { b.checked = true; })');
   await submit('approve', { pin: '24681357' });
   assert.match(await toast(), /Approved\. Now in Kite: BUY \d+ SAMPLE/);
@@ -224,7 +281,18 @@ try {
   await click('main a.sym');
   await until(() => js('location.hash === "#/stock/SAMPLE"'), 'symbol opens the stock page');
   await waitText('Open lots');
-  assert.match(await text(), /Evidence\s+\d+/);
+  assert.match(await text(), /Records\s+\d+/);
+  // Records carry their status; Claude's finds can be verified, the owner's corrected, flags show.
+  assert.match(await text(), /Verified/);
+  assert.match(await text(), /Found by/);
+  assert.match(await text(), /Flagged/);
+  assert.ok(await js('!!document.querySelector("main [data-action=verify-evidence]")'), 'Verify on the stock page');
+  await waitText('Desk rules', 'recommendation summary');
+  const nthText = await js('[...document.querySelectorAll("form[data-form=correct]")].findIndex((f) => f.elements.summary)');
+  await js(`document.querySelectorAll("details.correct")[${nthText}].open = true`);
+  await submit('correct', { summary: 'Synthetic corrected figure', reason: 'Synthetic correction for testing' }, { nth: nthText });
+  assert.match(await toast(), /Corrected/);
+  await waitText('Corrected');
   await js('document.querySelector("form[data-form=note] .fold").click()');
   await submit('note', { title: 'Watch 580', body: 'Weekly supply zone' });
   assert.match(await toast(), /Note saved/);
@@ -238,7 +306,7 @@ try {
   await waitText('No broker price saved yet.');
 
   // Every form field on these pages has an "i" help button.
-  for (const page of ['#/settings', '#/plan', '#/research', '#/agents', '#/playbooks/new', '#/strategies/new', '#/prepare', '#/stocks', '#/stock/SAMPLE']) {
+  for (const page of ['#/settings', '#/plan', '#/today', '#/agents', '#/playbooks/new', '#/strategies/new', '#/strategies/breakout', '#/prepare', '#/prepare/SAMPLE', '#/stocks', '#/stock/SAMPLE']) {
     await go(page);
     const missing = await js('[...document.querySelectorAll(".field")].filter((f) => !f.querySelector(".info")).map((f) => f.querySelector("label")?.textContent)');
     assert.deepEqual(missing, [], `fields without help on ${page}`);
@@ -321,18 +389,22 @@ try {
   await until(() => js('document.querySelector("#chain")?.innerText.includes("Chain intact")'), 'ledger chain');
   await shot('ledger');
 
-  // Pause stops the agent; strategies, playbooks and research pages render.
+  // Pause stops the agent; strategies, playbooks and Prepare pages render.
   await click('[data-action=pause]');
   assert.match(await toast(), /paused/);
   const paused = (await rpc('tools/call', { name: 'desk_status', arguments: {} })).result;
   assert.ok(paused.isError && /paused/.test(paused.content[0].text));
-  for (const page of ['#/research', '#/strategies', '#/strategies/breakout', '#/checklist', '#/prepare', '#/playbooks/new', '#/requests', '#/plan', '#/today']) {
+  for (const page of ['#/strategies', '#/strategies/breakout', '#/checklist', '#/prepare', '#/prepare/SAMPLE/BSE', '#/playbooks/new', '#/requests', '#/plan', '#/today']) {
     await go(page);
     await shot(page.replace(/[#/]+/g, '-').replace(/^-|-$/g, '') || 'page', 390);
   }
   await go('#/today');
   await until(() => js('!document.querySelector("#activity").innerText.includes("Loading")'), 'activity list after cached ledger');
   assert.match(await text(), /Bought \d+ SAMPLE/);
+  // Today: what Claude found waiting for you, and a stock picker instead of the old Research link.
+  assert.match(await text(), /New from Claude/);
+  assert.ok(await js('!!document.querySelector(".new-from-claude [data-action=verify-evidence]")'), 'Verify on Today');
+  assert.ok(await js('!!document.querySelector("main form[data-form=stock-pick]") && !document.querySelector("main a[href=\\"#/research\\"]")'), 'stock picker on Today');
   assert.equal(await js('(() => { const b = document.querySelector(".automation .btn"); const s = getComputedStyle(b); return s.color !== s.backgroundColor; })()'), true);
   await shot('today');
 

@@ -270,3 +270,32 @@ td { padding: 10px 8px; border-top: 1px solid var(--line-2); vertical-align: top
 /* Stock symbols open their stock page */
 a.sym { color: inherit; font-weight: 600; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
 a.sym:hover { color: var(--accent); text-decoration: underline solid; }
+
+/* Records: status, verify / confirm / correct, flags */
+.ev-row > div:first-child, .cl-items > li > div { flex: 1 1 auto; min-width: 0; }
+.rec-tools { margin-top: 8px; }
+.rec-tools > details[open] { flex-basis: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.flag { margin-top: 4px; }
+.prep-records { margin: 6px 0 0; padding-left: 12px; border-left: 3px solid var(--line); }
+.prep-records > li { padding: 6px 0; }
+.prep-tools { margin-top: 8px; }
+.prep-tools > details[open] { flex-basis: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.cl-later { margin-top: 10px; }
+.cl-later > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+.window { display: flex; flex-direction: column; gap: 8px; }
+.window p { margin: 0; }
+
+/* Recommendations: desk rules and Claude side by side; stacked on phones */
+.rec-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.rec { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.rec h3 { margin: 0 0 6px; }
+.rec ul { margin: 6px 0; padding-left: 18px; }
+.call { font-size: 14px; }
+.disagree { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bad-bg); border-radius: 8px; }
+@media (max-width: 700px) { .rec-grid { grid-template-columns: minmax(0, 1fr); } }
+.bse-note { white-space: normal; }
+.code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.cl-later > summary { list-style: none; gap: 6px; }
+.cl-later > summary::-webkit-details-marker { display: none; }
+.cl-later > summary::before { content: "▸"; color: var(--muted); }
+.cl-later[open] > summary::before { content: "▾"; }

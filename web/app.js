@@ -88,7 +88,9 @@ async function refresh() {
   // An older server (not restarted after an update) does not send these; pages still open and show the restart banner.
   S.trash ??= [];
   S.agentNames ??= Object.fromEntries(S.agents.map((a) => [a.id, a.name]));
+  S.recommendations ??= [];
   ledgerCache = null;
+  for (const c of Object.values(prepCache)) c.stale = true;
 }
 
 function toast(message, bad = false) {
@@ -280,7 +282,7 @@ const pages = {
     const nextRuns = S.playbooks.filter((pb) => pb.enabled).map((pb) => `<li><span>${esc(pb.name)}</span><span class="mono">${esc(scheduleText(pb.schedule))}</span></li>`).join('');
     return `
       <header class="page-head"><div><p class="muted">${esc(S.status.today)} · India date</p><h1>Today</h1></div>
-        <div class="actions"><a class="btn" href="#/research">Add broker price</a><a class="btn primary" href="#/plan">New plan</a></div></header>
+        <div class="actions"><a class="btn" href="#/prepare">Prepare</a><a class="btn primary" href="#/plan">New plan</a></div></header>
       <section class="tiles">
         ${tile('Loss if every stop is hit', `${money(p.openRisk)} / ${money(p.openRiskLimit)}`, p.openRisk, p.openRiskLimit, 'Your total open risk right now')}
         ${tile('Open lots', `${p.openLots} / ${st.maxOpenLots}`, p.openLots, st.maxOpenLots, p.openSymbols === 1 ? 'In 1 stock' : `In ${p.openSymbols} different stocks`)}
@@ -293,8 +295,11 @@ const pages = {
             ${pending.length || approved.length ? `<ul class="rows">${[...pending, ...approved].map(requestRow).join('')}</ul>` : '<p class="muted">Nothing waiting. Agents’ requests appear here.</p>'}
           </section>
           <section class="card"><div class="card-head"><h2>Open lots</h2><a href="#/positions">Positions</a></div>${lotsTable(open)}</section>
+          ${newFromClaude()}
         </div>
         <div class="col-side">
+          <form class="card form" data-form="stock-pick"><h2>Open a stock</h2><p class="small muted">Its prices, records, notes and requests, and where to save a broker price.</p>
+            ${field('Stock', '<input name="symbol" required autocapitalize="characters" placeholder="TATAMOTORS">')}<button class="btn primary">Open stock</button></form>
           <section class="card"><h2>Recent activity</h2><p class="muted small">Every change is in the ledger with who made it.</p><ul class="rows" id="activity"><li class="muted">Loading…</li></ul></section>
           <section class="card"><div class="card-head"><h2>Playbooks</h2><a href="#/playbooks">Edit</a></div>${nextRuns ? `<ul class="rows kv">${nextRuns}</ul>` : '<p class="muted">No playbooks yet.</p>'}</section>
         </div>
@@ -319,7 +324,7 @@ const pages = {
     const head = `<header class="page-head"><div><a href="#/requests">Back to requests</a><h1>${i.symbol ? esc(title).replace(esc(i.symbol), symLink(i.symbol)) : esc(title)} <span class="tag tag-muted">${esc(i.status)}</span></h1>
       <p class="muted">From ${byLine(i.by)} · ${when(i.at)}${i.status === 'pending' ? ` · expires ${when(i.expiresAt)}` : ''}${i.strategyName ? ` · strategy: ${esc(i.strategyName)}` : ''}</p></div>${FINISHED.has(i.status) ? trashBtn('request', i.id, 'this request') : ''}</header>`;
     const thesis = `<section class="card"><h2>Reason given</h2>${i.by === 'owner' ? '' : '<p class="small"><span class="tag tag-warn">Written by a model · not verified</span></p>'}<blockquote>${esc(i.thesis)}</blockquote>${evidenceFor(i)}</section>`;
-    const chart = i.symbol ? tvChart(i.symbol) : '';
+    const chart = i.symbol ? tvChart(i.symbol, i.plan?.exchange) : '';
     if (i.status === 'pending') return head + pendingRequest(i) + thesis + chart;
     return head + decidedRequest(i) + thesis + chart;
   },
@@ -378,64 +383,44 @@ const pages = {
     const closed = S.lots.filter((l) => l.symbol === sym && l.status === 'closed');
     const evidence = S.evidence.filter((e) => e.symbol === sym);
     const notes = S.notes.filter((n) => n.symbol === sym);
-    const quote = evidence.find((e) => e.kind === 'quote');
-    const strategy = S.strategies.find((s) => s.enabled)?.id ?? '';
+    const quote = evidence.find((e) => e.kind === 'quote' && e.status === 'verified') ?? evidence.find((e) => e.kind === 'quote');
+    const exchange = open[0]?.exchange ?? 'NSE';
     const rq = paged(`stock-requests-${sym}`, intents);
     const ev = paged(`stock-evidence-${sym}`, evidence);
     const nt = paged(`stock-notes-${sym}`, notes, 5);
     const kinds = Object.entries(S.meta.evidenceKinds).filter(([k]) => !['quote', 'funding'].includes(k));
     return `<header class="page-head"><div><a href="#/stocks">All stocks</a><h1>${esc(sym)}</h1>
-        <p class="muted">${market ? 'Whole-market checks saved once a day count for every stock.' : quote ? `Last broker price ${price(quote.price)} · ${byLine(quote.by)} · ${when(quote.observedAt)}` : 'No broker price saved yet.'}</p></div>
-        ${market ? '' : `<div class="actions"><a class="btn" href="#/prepare/${esc(strategy)}/${esc(encodeURIComponent(sym))}">Prepare</a><a class="btn primary" href="#/plan/${esc(encodeURIComponent(sym))}">New plan</a></div>`}</header>
+        <p class="muted">${market ? 'Whole-market records count for every stock.' : quote ? `Last broker price ${price(quote.price)}${quote.exchange ? ` on ${esc(quote.exchange)}` : ''} · ${byLine(quote.by)} · ${when(quote.observedAt)}` : 'No broker price saved yet.'}</p></div>
+        ${market ? '' : `<div class="actions"><a class="btn" href="#/prepare/${esc(encodeURIComponent(sym))}/${exchange}">Prepare</a><a class="btn primary" href="#/plan/${esc(encodeURIComponent(sym))}">New plan</a></div>`}</header>
       <div class="cols">
         <div class="col-main">
+          ${market ? '' : recSummary(sym, exchange)}
           ${open.length ? `<section class="card"><h2>Open lots <span class="small muted">${open.length}</span></h2>${open.map(lotCard).join('')}</section>` : ''}
           ${market ? '' : `<section class="card"><h2>Requests <span class="small muted">${intents.length}</span></h2>${intents.length ? `<ul class="rows">${rq.items.map((i) => requestRow(i)).join('')}</ul>${rq.nav}` : '<p class="muted">No requests for this stock.</p>'}</section>`}
-          <section class="card"><h2>Evidence <span class="small muted">${evidence.length}</span></h2>${evidence.length ? `<ul class="rows">${ev.items.map((e) => evidenceRow(e, true)).join('')}</ul>${ev.nav}` : '<p class="muted">None yet. Save some with the forms on this page, or ask Claude.</p>'}</section>
+          <section class="card" data-info="records"><h2>Records <span class="small muted">${evidence.length}</span></h2>
+            <p class="small muted">Only records you entered or verified count, and only until their good-until date. A correction keeps the old record, marked corrected.</p>
+            ${evidence.length ? `<ul class="rows">${ev.items.map((e) => evidenceRow(e, true)).join('')}</ul>${ev.nav}` : '<p class="muted">None yet. Save some with the forms on this page, on Prepare, or ask Claude.</p>'}</section>
           <section class="card"><h2>Notes <span class="small muted">${notes.length}</span></h2>${notes.length ? nt.items.map(noteHtml).join('') + nt.nav : '<p class="muted">No notes yet.</p>'}</section>
           ${closed.length ? `<section class="card"><h2>Closed lots <span class="small muted">${closed.length}</span></h2>${lotsTable(closed, true)}</section>` : ''}
-          ${market ? '' : tvChart(sym)}
+          ${market ? '' : tvChart(sym, exchange)}
         </div>
         <div class="col-side">
           ${market ? '' : `<form class="card form" data-form="quote" data-symbol="${esc(sym)}" data-start-folded><h2>Broker price</h2><p class="small muted">Copy the price from Kite now. It counts for 5 minutes.</p>
+            ${field('Exchange', `<select name="exchange">${options([['NSE', 'NSE'], ['BSE', 'BSE']], exchange)}</select>`)}
             ${field('Price ₹', num('price', '', 'required'))}<button class="btn primary">Save price</button></form>
           <form class="card form" data-form="funding" data-symbol="${esc(sym)}" data-start-folded><h2>MTF requirement</h2><p class="small muted">From Kite’s MTF stock list, today. Counts for today only.</p>
             ${fundingFields('Kite shows it as', fundingMode())}${field('Where you checked', '<input name="summary" value="Kite MTF list">')}<button class="btn primary">Save requirement</button></form>`}
-          <form class="card form" data-form="evidence" data-symbol="${esc(sym)}" data-start-folded><h2>Other evidence</h2>
+          <form class="card form" data-form="evidence" data-symbol="${esc(sym)}" data-start-folded><h2>Other record</h2>
             ${field('Kind', `<select name="kind">${options(kinds, market ? 'macro' : 'news')}</select>`)}
             ${field('What you found', '<textarea name="summary" rows="3" required></textarea>')}
             ${field('Link (optional)', '<input name="source" type="url">')}
-            <button class="btn primary">Save evidence</button></form>
+            ${field('Exchange (prices and charts only)', `<select name="exchange">${options([['NSE', 'NSE'], ['BSE', 'BSE']], exchange)}</select>`)}
+            ${field('Good until (optional)', '<input name="goodUntil" type="date">', 'Blank: the desk picks by kind (chart readings 5 days, fundamentals 90, market-wide 7, news today only).')}
+            <button class="btn primary">Save record</button></form>
           <form class="card form" data-form="note" data-symbol="${esc(sym)}" data-start-folded><h2>Note</h2>
             ${field('Title', '<input name="title" required maxlength="200">')}
             ${field('Note', '<textarea name="body" rows="4" required></textarea>')}
             <button class="btn primary">Save note</button></form>
-        </div>
-      </div>`;
-  },
-
-  research() {
-    const kinds = Object.entries(S.meta.evidenceKinds);
-    return `<header class="page-head"><h1>Research</h1></header>
-      <div class="cols">
-        <div class="col-side">
-          <form class="card form" data-form="quote"><h2>Broker price</h2><p class="small muted">Copy the price from Kite now, or confirm an agent’s price in the Evidence list. It counts for 5 minutes.</p>
-            ${field('Stock', '<input name="symbol" required autocapitalize="characters">')}${field('Price ₹', num('price', '', 'required'))}
-            <button class="btn primary">Save price</button></form>
-          <form class="card form" data-form="funding"><h2>MTF requirement</h2><p class="small muted">From Kite’s MTF stock list, today. Counts for today only.</p>
-            ${field('Stock', '<input name="symbol" required autocapitalize="characters">')}${fundingFields('Kite shows it as', fundingMode())}
-            ${field('Where you checked', '<input name="summary" value="Kite MTF list">')}
-            <button class="btn primary">Save requirement</button></form>
-          <form class="card form" data-form="evidence"><h2>Other evidence</h2>
-            ${field('Kind', `<select name="kind">${options(kinds.filter(([k]) => !['quote', 'funding'].includes(k)), 'news')}</select>`)}
-            ${field('Stock', '<input name="symbol" required autocapitalize="characters">')}
-            ${field('What you found', '<textarea name="summary" rows="3" required></textarea>')}
-            ${field('Link (optional)', '<input name="source" type="url">')}
-            <button class="btn primary">Save evidence</button></form>
-        </div>
-        <div class="col-main">
-          <section class="card"><h2>Evidence</h2>${S.evidence.length ? (({ items, nav }) => `<ul class="rows">${items.map((e) => evidenceRow(e, true)).join('')}</ul>${nav}`)(paged('evidence', S.evidence)) : '<p class="muted">None yet.</p>'}</section>
-          <section class="card"><h2>Notes</h2>${S.notes.length ? (({ items, nav }) => items.map(noteHtml).join('') + nav)(paged('notes', S.notes, 5)) : '<p class="muted">Agents with Draft access can add notes.</p>'}</section>
         </div>
       </div>`;
   },
@@ -445,7 +430,7 @@ const pages = {
     return `<header class="page-head"><h1>Strategies</h1><a class="btn primary" href="#/strategies/new">New strategy</a></header>
       <p class="lead">Each strategy has its own checklist. Every buy must name one. The built-in strategies are starting templates, not recommendations.</p>
       ${S.strategies.map((s) => `<section class="card" data-fold="${esc(s.id)}"><div class="card-head"><h2>${esc(s.name)} <span class="tag tag-muted">v${s.version}</span>${s.enabled ? '' : ' <span class="tag tag-muted">off</span>'}</h2><div class="row-tools"><a href="#/strategies/${esc(s.id)}">Edit</a>${trashBtn('strategy', s.id, `strategy ${s.name}`)}</div></div>
-        <p class="muted">${esc(s.description)} · ${s.items.length} checks · <a href="#/prepare/${esc(s.id)}">Prepare a stock</a></p>${strategyItemsHtml(s.items, { checklist: S.meta.checklist, esc })}</section>`).join('')}`;
+        <p class="muted">${esc(s.description)} · ${s.items.length} checks · <a href="#/prepare">Prepare a stock</a></p><p class="small">${esc(windowText(strategyWin(s)))}</p>${strategyItemsHtml(s.items, { checklist: S.meta.checklist, esc })}</section>`).join('')}`;
   },
 
   checklist() {
@@ -453,43 +438,27 @@ const pages = {
     const count = c.groups.reduce((a, g) => a + g.items.length, 0);
     return `<header class="page-head"><div><h1>Pre-trade checklist</h1><p class="muted">${c.groups.length} groups · ${count} checks</p></div>
       <div class="actions"><button class="btn" data-action="copy-complete">Make my own strategy from this list</button></div></header>
-      <p class="lead">Everything worth looking at before a swing trade, in two stages. <b>Research</b> can be done 1–5 days before. <b>On the day</b> must be checked just before buying. Strategies pick from this list. Nothing here is advice.</p>
+      <p class="lead">Everything worth looking at before a swing trade, in two stages. <b>Research</b> is done on the Prepare page days before; each strategy says how long it must wait and how long it keeps counting (${esc(windowText({ bufferDays: S.meta.checklist.window.defaultBuffer, expireDays: S.meta.checklist.window.defaultExpire }))}). <b>On the day</b> must be checked just before buying. Strategies pick from this list. Nothing here is advice.</p>
       <p class="small muted">Whole-market checks (Nifty, VIX, US and Asian markets, crude oil, USDINR, FII/DII) are saved once a day under the name <b>${esc(c.market)}</b> and count for every stock.</p>
       ${libraryHtml(c, { esc })}
       <section class="card"><h2>Free places to look</h2><ul class="rows">${Object.values(c.sources).map(([name, url]) => `<li><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)}</a></li>`).join('')}</ul></section>`;
   },
 
-  prepare(strategyId, symbol) {
-    const strategies = S.strategies.filter((s) => s.enabled);
-    const sid = strategyId || strategies[0]?.id;
-    const sym = (symbol || '').toUpperCase();
-    const key = `${sid}|${sym}`;
-    let body = '<p class="muted">Enter a stock and choose a strategy to see its research checklist.</p>';
+  prepare(...args) {
+    // Old links were #/prepare/<strategy>/<stock>; new ones are #/prepare/<stock>/<exchange>.
+    if (args[0] && S.strategies.some((x) => x.id === args[0])) args = args.slice(1);
+    const sym = (args[0] || '').toUpperCase().replace(/[^A-Z0-9&._-]/g, '');
+    const exchange = args[1] === 'BSE' ? 'BSE' : 'NSE';
+    const w = S.meta.checklist.window;
+    let body = '<p class="muted">Enter a stock to see the full research list, how each strategy fits, and the desk’s and Claude’s views.</p>';
     if (sym) {
-      const cached = drafts.prepare?.key === key ? drafts.prepare.data : null;
-      if (!cached) {
-        loadPrepare(sid, sym, key);
-        body = '<p class="muted">Loading…</p>';
-      } else {
-        const research = cached.checks.filter((c) => c.stage === 'research');
-        const today = cached.checks.filter((c) => c.stage !== 'research');
-        body = `<form class="card form" data-form="research" data-strategy="${esc(sid)}" data-symbol="${esc(sym)}">
-            <div class="card-head"><h2>${esc(sym)} · ${esc(cached.strategyName)}</h2>${cached.researchDone ? '<span class="tag tag-ok">Research done</span>' : '<span class="tag tag-ask">Research not finished</span>'}</div>
-            <p class="small">Tick what you checked. Your answers count for ${S.meta.checklist.researchValidDays} days for this stock and strategy. Evidence comes from you or Claude (Research page).</p>
-            ${checklistHtml(research, { checklist: S.meta.checklist, esc, tag, answer: 'research' })}
-            <button class="btn primary">Save research</button>
-          </form>
-          ${tvChart(sym)}
-          <section class="card"><h2>Later, on the day</h2><p class="small muted">These are checked just before buying, on the request page. Shown here so you know what is coming.</p>
-            ${checklistHtml(today, { checklist: S.meta.checklist, esc, tag })}</section>
-          <section class="card"><h2>Let Claude do the research</h2><p class="small">Ask Claude Code:</p>
-            <pre class="code">Use swing-desk. Call get_research_status for ${esc(sym)} with strategy ${esc(sid)}. For every item that is not passing, research it with free sources and save it with add_evidence (whole-market checks under MARKET), with links. Then tell me what you found and what I still need to check myself.</pre></section>`;
-      }
+      const cached = prepData(sym, exchange);
+      body = cached ? prepareBody(sym, exchange, cached) : '<p class="muted">Loading…</p>';
     }
-    return `<header class="page-head"><div><h1>Prepare a trade</h1><p class="muted">Stage 1: research, 1–5 days before you buy.${sym ? ` Everything about ${symLink(sym)} is on its stock page.` : ''}</p></div></header>
+    return `<header class="page-head"><div><h1>Prepare a trade</h1><p class="muted">Stage 1: research, days before you buy. Nothing can be approved until its research has waited. ${esc(windowText({ bufferDays: w.defaultBuffer, expireDays: w.defaultExpire }))}${sym ? ` Everything about ${symLink(sym)} is on its stock page.` : ''}</p></div></header>
       <form class="card form inline" data-form="prepare-pick">
         ${field('Stock', `<input name="symbol" required autocapitalize="characters" value="${esc(sym)}">`)}
-        ${field('Strategy', `<select name="strategyId">${options(strategies.map((s) => [s.id, s.name]), sid)}</select>`)}
+        ${field('Exchange', `<select name="exchange">${options([['NSE', 'NSE'], ['BSE', 'BSE']], exchange)}</select>`)}
         <button class="btn primary">Show checklist</button>
       </form>
       ${body}`;
@@ -563,6 +532,204 @@ const pages = {
 
 // ---------- page pieces ----------
 
+// ---------- records, Prepare and recommendations ----------
+
+const NEEDS_CONFIRM = new Set(['quote', 'funding']); // confirmed against Kite, never “verified”
+const PRICE_KINDS = new Set(['quote', 'candles', 'zones']); // mirrors EXCHANGE_KINDS in src/core/evidence.js
+// Days a new record stays good, by kind. Mirrors suggestGoodUntil in src/core/knowledge.js.
+const GOOD_DAYS = { candles: 5, zones: 5, sector: 5, macro: 7, governance: 90, legal: 90, other: 90, fundamentals: 90, news: 0, quote: 0, funding: 0 };
+const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const suggestGoodUntil = (kind, date) => addDays(date, GOOD_DAYS[kind] ?? 90);
+const RECORD_TAG = { found: ['Found, not verified', 'tag-warn'], verified: ['Verified', 'tag-ok'], expired: ['Past good-until', 'tag-muted'], corrected: ['Corrected', 'tag-bad'], trashed: ['In the Trash', 'tag-muted'] };
+const recordTag = (e) => { const [label, cls] = RECORD_TAG[e.status] ?? [e.status, 'tag-muted']; return `<span class="tag ${cls}">${esc(label)}</span>`; };
+const CALL = { wait: ['Wait', 'tag-warn'], buy: ['Buy', 'tag-ok'], hold: ['Hold', 'tag-muted'], sell: ['Sell', 'tag-bad'] };
+const callTag = (call) => `<span class="tag call ${CALL[call]?.[1] ?? 'tag-muted'}">${CALL[call]?.[0] ?? esc(call)}</span>`;
+const exchangeSelect = (selected) => `<select name="exchange">${options([['NSE', 'NSE'], ['BSE', 'BSE']], selected)}</select>`;
+
+const LONG_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const strategyWin = (s) => ({ bufferDays: s?.bufferDays ?? S.meta.checklist.window.defaultBuffer, expireDays: s?.expireDays ?? S.meta.checklist.window.defaultExpire });
+/** “Buffer 3, expire 5: research ticked on Monday counts Thursday to Saturday.” */
+function windowText({ bufferDays: b, expireDays: e }) {
+  const day = (n) => `${LONG_DAYS[(1 + n) % 7]}${n < 7 ? '' : n < 14 ? ' a week later' : ` ${Math.floor(n / 7)} weeks later`}`;
+  return `Buffer ${b}, expire ${e}: research ticked on Monday counts ${day(b)} to ${day(e)}.`;
+}
+
+/** A checklist item as a strategy item: from the strategy, or from the library (master list) when no strategy is given. */
+function itemDef(strategyId, id) {
+  if (strategyId) return S.strategies.find((s) => s.id === strategyId)?.items.find((i) => i.id === id);
+  for (const g of S.meta.checklist.groups) {
+    const i = g.items.find((x) => x.id === id);
+    if (i) return toStrategyItem(i, g.id);
+  }
+  return null;
+}
+const libraryItem = (id) => S.meta.checklist.groups.flatMap((g) => g.items).find((i) => i.id === id);
+const isBound = (item) => item.exchangeBound ?? libraryItem(item.id)?.exchangeBound ?? false;
+const recordSymbol = (item, symbol) => (item.scope === 'market' ? S.meta.checklist.market : symbol);
+/** Records that could answer an evidence item for a stock on an exchange, best first. */
+function recordsFor(item, symbol, exchange, statuses) {
+  const sym = recordSymbol(item, symbol);
+  const bound = isBound(item);
+  return S.evidence
+    .filter((e) => e.kind === item.kind && e.symbol === sym && statuses.includes(e.status) && (!bound || !e.exchange || e.exchange === exchange))
+    .sort((a, b) => (b.topic === item.id) - (a.topic === item.id));
+}
+
+/** Owner-only: an agent's (or an old) record is right. Prices and MTF are confirmed instead. */
+function verifyButton(e) {
+  if (e.status !== 'found' || NEEDS_CONFIRM.has(e.kind)) return '';
+  return `<button type="button" class="btn" data-action="verify-evidence" data-id="${esc(e.id)}" aria-label="Verify this ${esc(e.kind)} record for ${esc(e.symbol)}">Verify</button>`;
+}
+
+function correctForm(e) {
+  const value = e.kind === 'quote' ? field('Correct price ₹', num('price', e.price, 'required'))
+    : e.kind === 'funding' ? field('Correct own cash %', num('marginPct', e.marginPct, 'required min="1" max="100"'))
+    : field('Corrected text', `<textarea name="summary" rows="3" required>${esc(e.summary)}</textarea>`);
+  return `<details class="correct"><summary class="btn">Correct</summary><form class="form" data-form="correct" data-id="${esc(e.id)}">
+    <p class="small muted">The old record stays in the history, marked corrected, and stops counting. Research you prepared with it must be prepared again, and its wait starts again.</p>
+    ${value}${e.exchange ? field('Exchange', exchangeSelect(e.exchange)) : ''}
+    ${NEEDS_CONFIRM.has(e.kind) ? '' : field('Good until (optional)', '<input name="goodUntil" type="date">', 'Blank: the desk picks by kind.')}
+    ${field('Why it was wrong', '<input name="reason" required maxlength="500">')}
+    <button class="btn primary">Save correction</button></form></details>`;
+}
+
+function flagsHtml(e) {
+  return (e.flags ?? []).map((f) => `<div class="small flag"><span class="tag tag-warn">Flagged</span> ${f.by === 'owner' ? 'You' : `${esc(actorName(f.by))} (written by a model · not verified)`} · ${when(f.at)}: ${esc(f.reason)}</div>`).join('');
+}
+
+/** What Claude found, its views and its flags, waiting for the owner. */
+function newFromClaude() {
+  const found = S.evidence.filter((e) => e.status === 'found' && e.by !== 'owner' && !(NEEDS_CONFIRM.has(e.kind) && S.evidence.some((x) => x.confirms === e.id)));
+  const flagged = S.evidence.filter((e) => e.flags?.length && ['found', 'verified', 'expired'].includes(e.status));
+  const views = (S.recommendations ?? []).filter((r) => String(r.by).startsWith('agent:')).slice(0, 5);
+  const head = '<h2>New from Claude</h2><p class="small muted">Written by a model, not verified. A record counts only after you verify it; prices and MTF requirements only after you confirm them against Kite.</p>';
+  if (!found.length && !flagged.length && !views.length) return `<section class="card new-from-claude" data-info="verify">${head}<p class="muted">Nothing new. Records Claude finds, its views and its flags appear here.</p></section>`;
+  const p = paged('today-found', found, 5);
+  return `<section class="card new-from-claude" data-info="verify">${head}
+    ${found.length ? `<h3>Found records <span class="small muted">${found.length}</span></h3><ul class="rows">${p.items.map((e) => evidenceRow(e)).join('')}</ul>${p.nav}` : ''}
+    ${views.length ? `<h3>Claude’s views</h3><ul class="rows">${views.map((r) => `<li><div><b>${symLink(r.symbol)}</b> ${esc(r.exchange)} · Claude says ${callTag(r.call)}<div class="small muted">${when(r.at)} · ${esc(String(r.reasons).slice(0, 160))}</div></div><a class="btn" href="#/prepare/${esc(encodeURIComponent(r.symbol))}/${esc(r.exchange)}">Compare on Prepare</a></li>`).join('')}</ul>` : ''}
+    ${flagged.length ? `<h3 data-info="flag">Flagged records <span class="small muted">${flagged.length}</span></h3><ul class="rows">${flagged.slice(0, 5).map((e) => evidenceRow(e)).join('')}</ul><p class="small muted">Open the stock to correct a record that is really wrong.</p>` : ''}
+  </section>`;
+}
+
+// Prepare data comes from the server (prepare.status). Cached per stock and exchange; every
+// state refresh marks it stale, and the page shows the last copy while a fresh one loads.
+const prepCache = {};
+function prepData(symbol, exchange) {
+  const key = `${symbol}|${exchange}`;
+  const c = prepCache[key];
+  if (!c || c.stale) loadPrep(symbol, exchange, key, !!c);
+  return c?.data ?? null;
+}
+const loadingPrep = new Set();
+async function loadPrep(symbol, exchange, key, hadData) {
+  if (loadingPrep.has(key)) return;
+  loadingPrep.add(key);
+  try {
+    const r = await api('/api/action/prepare.status', { method: 'POST', body: JSON.stringify({ symbol, exchange }) });
+    prepCache[key] = { data: r.result };
+    // Do not redraw under someone typing; the fresh copy shows on the next redraw.
+    if (hadData && document.activeElement?.closest('main form')) return;
+    if (/^#\/(prepare|stock)\//.test(location.hash)) render();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    loadingPrep.delete(key);
+  }
+}
+
+/** Buttons, records and a small form under one research item on the Prepare page. */
+function prepExtra(c, strategyId, symbol, exchange) {
+  const item = itemDef(strategyId, c.id.replace(/^item:/, ''));
+  if (!item || (item.stage ?? 'before') !== 'research' || !['attest', 'evidence'].includes(item.type)) return '';
+  const counting = c.status === 'pass' || c.status === 'wait';
+  const base = `data-symbol="${esc(symbol)}" data-exchange="${esc(exchange)}" data-itemid="${esc(item.id)}" data-strategy="${esc(strategyId ?? '')}"`;
+  const mark = (yes, label, evidenceId) => `<button type="button" class="btn" data-action="prepare-mark" data-yes="${yes ? 1 : 0}" ${base}${evidenceId ? ` data-evidence="${esc(evidenceId)}"` : ''}>${label}</button>`;
+  if (item.type === 'attest') return `<div class="actions prep-tools">${counting ? mark(false, 'Remove mark') : mark(true, c.status === 'missing' ? 'I checked this' : 'I checked it again')}</div>`;
+  const today = S.status.today;
+  const records = recordsFor(item, symbol, exchange, ['verified', 'found']).slice(0, 3);
+  const rows = records.map((e) => `<li class="prep-record"><div>${recordTag(e)} ${e.exchange ? `<span class="tag tag-muted">${esc(e.exchange)}</span> ` : ''}${esc(e.summary || (e.price ? price(e.price) : ''))}
+      <div class="small muted">${e.by === 'owner' ? 'You' : `Found by ${esc(actorName(e.by))}`} · ${when(e.observedAt)}${e.status === 'verified' ? ` · good until ${esc(e.goodUntil)}` : ''}</div>${flagsHtml(e)}</div>
+      <div class="actions">${e.status === 'verified' ? mark(true, counting ? 'Use this record instead (the wait starts again)' : 'Use this verified record', e.id) : verifyButton(e)}</div></li>`).join('');
+  const sym = recordSymbol(item, symbol);
+  const form = `<details class="prep-add"><summary class="btn">Add a record</summary>
+    <form class="form" data-form="prep-evidence" ${base} data-kind="${esc(item.kind)}" data-record-symbol="${esc(sym)}">
+      <p class="small muted">A “${esc(S.meta.evidenceKinds[item.kind] ?? item.kind)}” record${sym !== symbol ? ` saved under ${esc(sym)} (counts for every stock)` : ''}. You entered it, so it counts as verified until its good-until date.</p>
+      ${field('What you found', '<textarea name="summary" rows="2" required></textarea>')}
+      ${field('Link (optional)', '<input name="source" type="url">')}
+      ${PRICE_KINDS.has(item.kind) ? field('Exchange', exchangeSelect(exchange)) : ''}
+      ${field('Good until', `<input name="goodUntil" type="date" required min="${today}" value="${suggestGoodUntil(item.kind, today)}">`)}
+      <button class="btn primary">Save record and use it</button></form></details>`;
+  return `${rows ? `<ul class="rows prep-records">${rows}</ul>` : '<p class="small muted">No verified record yet.</p>'}<div class="actions prep-tools">${form}</div>`;
+}
+
+function prepareBody(symbol, exchange, d) {
+  const cl = S.meta.checklist;
+  const research = d.master.checks.filter((c) => c.stage === 'research');
+  const later = d.master.checks.filter((c) => c.stage !== 'research');
+  const master = `<section class="card prep-master" data-fold="master"><div class="card-head"><h2>Master list · ${esc(symbol)} on ${esc(exchange)}</h2>${d.master.researchDone ? '<span class="tag tag-ok">Core research counting</span>' : '<span class="tag tag-ask">Core research not finished</span>'}</div>
+      <p class="small">The full pre-trade list, for every stock. Mark an item when you have checked it; it counts only after the wait. A mark here also counts for every strategy that uses the same item. Core items feed the desk’s view below; only a request’s own strategy items can block approval.</p>
+      <p class="small muted">Price and chart items use only ${esc(exchange)} records. Switch the exchange above to prepare on the other one.</p>
+      ${checklistHtml(research, { checklist: cl, esc, tag, extra: (c) => prepExtra(c, null, symbol, exchange) })}
+      <details class="cl-later"><summary>On the day: ${later.length} checks done on the request page</summary>${checklistHtml(later, { checklist: cl, esc, tag })}</details></section>`;
+  const strategies = d.strategies.map((r) => {
+    const fit = d.desk.strategies.find((x) => x.id === r.strategyId);
+    const items = r.checks.filter((c) => c.stage === 'research');
+    const ready = r.readyOn
+      ? (r.readyOn <= S.status.today ? 'Its required research counts today.' : `Its required research all counts from ${esc(r.readyOn)}, if nothing expires first.`)
+      : 'No ready date yet: some required research is not prepared, has expired, or must be prepared again.';
+    return `<section class="card prep-strategy" data-fold="strategy-${esc(r.strategyId)}"><div class="card-head"><h2>${esc(r.strategyName)} <span class="tag tag-muted">v${r.version}</span></h2>${fit?.fits ? '<span class="tag tag-ok">Research ready</span>' : '<span class="tag tag-ask">Not ready yet</span>'}</div>
+      <p class="small">${esc(windowText(r.window))}</p><p>${ready}</p>
+      ${fit?.missing.length ? `<p class="small">Still to do: ${fit.missing.map(esc).join('; ')}.</p>` : ''}
+      <details class="cl-later"><summary>Its research items (${items.length})</summary>${checklistHtml(items, { checklist: cl, esc, tag, extra: (c) => prepExtra(c, r.strategyId, symbol, exchange) })}</details></section>`;
+  }).join('');
+  return `${master}${strategies || '<p class="muted">No strategy is switched on.</p>'}${recCards(symbol, exchange, d)}
+    ${tvChart(symbol, exchange)}
+    <section class="card"><h2>Let Claude do the research</h2><p class="small">Ask Claude Code:</p>
+      <pre class="code wrap">Use swing-desk. For ${esc(symbol)} on ${esc(exchange)}, call list_evidence and use the records that are still verified. For each research item still missing, research it with free sources and save it with add_evidence (exchange ${esc(exchange)} for prices and charts, whole-market checks under MARKET), with links. Then call get_recommendation and save your own view with add_recommendation. Tell me what I still need to check and verify myself.</pre></section>`;
+}
+
+/** The desk's rule-based view and Claude's view, side by side. Neither is advice. */
+function recCards(symbol, exchange, d) {
+  const { desk, agent } = d;
+  const names = (ids) => ids.map((id) => esc(S.strategies.find((s) => s.id === id)?.name ?? id)).join(', ');
+  const fits = desk.strategies.filter((s) => s.fits);
+  const differ = agent && agent.call !== desk.call;
+  return `<section class="card recs" data-fold="recs"><h2>Wait, buy, hold or sell</h2>
+    <p class="small muted">Two views side by side. Neither is advice, and the desk never acts on either. You decide, and only you approve.</p>
+    ${differ ? '<p class="disagree"><span class="tag tag-bad">The desk and Claude disagree</span> Read both reasons before deciding anything.</p>' : ''}
+    <div class="rec-grid">
+      <article class="rec"><h3>Desk rules</h3><p>The rules give: ${callTag(desk.call)}</p>
+        <ul class="small">${desk.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+        <p class="small">${fits.length ? `Strategies with research ready: ${names(fits.map((s) => s.id))}.` : 'No strategy has its research ready yet.'}</p>
+        ${desk.recheck.length ? `<p class="small">Needs a re-check (not a sell reason): ${desk.recheck.map(esc).join('; ')}.</p>` : ''}
+        <p class="small muted">Worked out only from records you entered or verified, on ${esc(exchange)}. “Near the stop” means the latest price is in the bottom quarter of the way from the stop up to the entry. Example: entry ₹500, stop ₹480: at or below ₹485.</p></article>
+      <article class="rec"><h3>Claude <span class="small">(written by a model · not verified)</span></h3>
+        ${agent ? `<p>Claude gives: ${callTag(agent.call)}</p><p class="small pre">${esc(agent.reasons)}</p>
+          ${agent.strategyIds?.length ? `<p class="small">Strategies it names: ${names(agent.strategyIds)}.</p>` : ''}${sourcesList(agent.sources)}
+          <p class="small muted">${esc(actorName(agent.by))} · ${when(agent.at)}</p>` : `<p class="muted">No view from Claude for ${esc(symbol)} on ${esc(exchange)} yet. Ask it with the prompt below.</p>`}</article>
+    </div></section>`;
+}
+
+/** Short version of both views for the stock page. */
+function recSummary(symbol, exchange) {
+  const d = prepData(symbol, exchange);
+  const head = `<div class="card-head"><h2>Desk rules and Claude · ${esc(exchange)}</h2><a href="#/prepare/${esc(encodeURIComponent(symbol))}/${esc(exchange)}">Compare on Prepare</a></div>`;
+  if (!d) return `<section class="card rec-summary" data-fold="recs">${head}<p class="muted">Loading…</p></section>`;
+  const differ = d.agent && d.agent.call !== d.desk.call;
+  return `<section class="card rec-summary" data-fold="recs">${head}
+    <p>Desk rules: ${callTag(d.desk.call)} · Claude (written by a model · not verified): ${d.agent ? callTag(d.agent.call) : '<span class="muted">no view yet</span>'}${differ ? ' <span class="tag tag-bad">The desk and Claude disagree</span>' : ''}</p>
+    ${d.desk.reasons[0] ? `<p class="small muted">${esc(d.desk.reasons[0])}</p>` : ''}<p class="small muted">Neither is advice; the desk never acts on either.</p></section>`;
+}
+
+/** On a request: unverified records that could make a failing on-the-day check pass. */
+function requestExtra(c, i) {
+  const item = itemDef(i.strategyId, c.id.replace(/^item:/, ''));
+  if (!item || item.type !== 'evidence' || c.status === 'pass' || (item.stage ?? 'before') === 'research') return '';
+  return recordsFor(item, i.symbol, i.plan?.exchange ?? 'NSE', ['found']).slice(0, 2)
+    .map((e) => `<div class="confirm-row"><span class="small">${e.by === 'owner' ? 'You' : esc(actorName(e.by))} found at ${when(e.observedAt)}${e.exchange ? ` (${esc(e.exchange)})` : ''}: ${esc(String(e.summary).slice(0, 160))} <span class="tag tag-warn">not verified</span></span>${verifyButton(e)}</div>`).join('');
+}
+
 function tile(label, value, used, limit, hint) {
   return `<div class="tile"><div class="muted small">${label}</div><div class="tile-value mono">${value}</div><meter min="0" max="${Math.max(1, limit)}" value="${Math.min(Math.max(0, used), limit)}" high="${limit * 0.8}" optimum="0"></meter><div class="small muted">${hint}</div></div>`;
 }
@@ -589,12 +756,13 @@ function pendingRequest(i) {
     <section class="card"><h2>Checks the app makes</h2><ul class="rows">${desk.map((c) => `<li><div>${tag(c.status)} <b>${esc(c.label)}</b>${c.required ? '' : ' <span class="muted small">(optional)</span>'}<div class="small muted">${esc(c.detail)}</div></div></li>`).join('')}</ul>
       ${quoteFix ? agentFinding(i.symbol, 'quote') : ''}
       ${fundingFix ? agentFinding(i.symbol, 'funding') : ''}
-      ${quoteFix ? `<form class="form inline" data-form="quote" data-symbol="${esc(i.symbol)}">${field(`Price in Kite now for ${esc(i.symbol)} ₹`, num('price', '', 'required'))}<button class="btn">Save fresh price</button></form>` : ''}
+      ${quoteFix ? `<form class="form inline" data-form="quote" data-symbol="${esc(i.symbol)}" data-exchange="${esc(ev.plan.exchange)}">${field(`${esc(ev.plan.exchange)} price in Kite now for ${esc(i.symbol)} ₹`, num('price', '', 'required'))}<button class="btn">Save fresh price</button></form>` : ''}
       ${fundingFix ? `<form class="form inline" data-form="funding" data-symbol="${esc(i.symbol)}">${fundingFields('MTF limit from Kite today, as', fundingMode())}<button class="btn">Save requirement</button></form>` : ''}
     </section>
     <form class="card form" data-form="approve" data-id="${esc(i.id)}"><h2>Strategy checklist and your decision</h2>
-      ${items.length ? `<p class="small">Tick each “Your answer” item only if it is really true. Research you already did on the <a href="#/prepare/${esc(i.strategyId)}/${esc(i.symbol)}">Prepare page</a> counts for ${S.meta.checklist.researchValidDays} days.</p>
-      ${checklistHtml(items, { checklist: S.meta.checklist, esc, tag, answer: 'ask' })}` : ''}
+      ${items.length ? `<p class="small">Research items are not ticked here. They come from the <a href="#/prepare/${esc(encodeURIComponent(i.symbol))}/${esc(ev.plan.exchange)}">Prepare page</a> and count only inside this strategy’s window. ${esc(windowText(strategyWin(S.strategies.find((s) => s.id === i.strategyId))))}</p>
+      <p class="small">Tick each on-the-day “Your answer” item only if it is really true now. Records from Claude count only after you verify them.</p>
+      ${checklistHtml(items, { checklist: S.meta.checklist, esc, tag, answer: 'ask', extra: (c) => requestExtra(c, i) })}` : ''}
       <p class="small">Approving saves your decision and gives you an order ticket. You place the order yourself in Kite.</p>
       ${pinField()}
       <div class="actions"><button class="btn primary">Approve</button></div>
@@ -627,12 +795,22 @@ function evidenceFor(i) {
 
 function evidenceRow(e, withTrash = false) {
   const value = e.kind === 'quote' ? price(e.price) : e.kind === 'funding' ? `up to ${funding(e.marginPct)}` : esc(e.summary);
-  return `<li><div><b>${symLink(e.symbol)}</b> <span class="tag tag-muted">${esc(e.kind)}</span> ${value}<div class="small muted">${byLine(e.by)} · observed ${when(e.observedAt)}${e.confirms ? ' · confirmed against Kite' : ''}</div>${sourcesList(e.sources)}</div><div class="row-tools">${confirmButton(e)}${withTrash ? trashBtn('evidence', e.id, `${e.kind} evidence for ${e.symbol}`) : ''}</div></li>`;
+  const meta = [
+    e.by === 'owner' ? 'You' : `Found by ${esc(actorName(e.by))}`,
+    e.exchange ? esc(e.exchange) : '',
+    e.topic ? `for “${esc(libraryItem(e.topic)?.label ?? e.topic)}”` : '',
+    `observed ${when(e.observedAt)}`,
+    e.goodUntil && (e.status === 'verified' || e.status === 'expired') ? `good until ${esc(e.goodUntil)}` : '',
+    e.confirms ? 'confirmed against Kite' : '',
+    e.corrects ? `corrects an earlier record: ${esc(e.reason ?? '')}` : '',
+  ].filter(Boolean).join(' · ');
+  const tools = confirmButton(e) + verifyButton(e) + (withTrash && ['found', 'verified', 'expired'].includes(e.status) ? correctForm(e) : '');
+  return `<li class="ev-row"><div>${e.status ? `${recordTag(e)} ` : ''}<b>${symLink(e.symbol)}</b> <span class="tag tag-muted">${esc(e.kind)}</span> ${value}<div class="small muted">${meta}</div>${sourcesList(e.sources)}${flagsHtml(e)}${tools ? `<div class="actions rec-tools">${tools}</div>` : ''}</div>${withTrash ? trashBtn('evidence', e.id, `${e.kind} record for ${e.symbol}`) : ''}</li>`;
 }
 
 /** Agent-found prices and MTF requirements count only after the owner checks them in Kite. */
 function confirmButton(e) {
-  if (!['quote', 'funding'].includes(e.kind) || e.by === 'owner') return '';
+  if (!NEEDS_CONFIRM.has(e.kind) || e.by === 'owner' || e.status === 'corrected' || e.status === 'trashed') return '';
   if (S.evidence.some((x) => x.confirms === e.id)) return '<span class="tag tag-ok">Confirmed</span>';
   const label = e.kind === 'quote' ? `Kite shows ${price(e.price)} now` : `Kite allows ${lev(e.marginPct)} today`;
   return `<button class="btn" data-action="confirm-evidence" data-id="${esc(e.id)}">${label}: confirm</button>`;
@@ -653,9 +831,10 @@ function sourcesList(list) {
  * TradingView does not allow NSE data in charts embedded on other sites, so the embed shows the BSE
  * listing and links to the NSE chart on tradingview.com.
  */
-function tvChart(symbol) {
+function tvChart(symbol, exchange = 'NSE') {
   const sym = esc(encodeURIComponent(symbol));
-  return `<details class="card tv-chart" data-tv-symbol="${esc(`BSE:${symbol}`)}"><summary>TradingView chart · BSE:${esc(symbol)}</summary>
+  const note = exchange === 'BSE' ? '' : ` <span class="tag tag-warn bse-note">Shows BSE prices · nothing on it counts for ${esc(exchange)}</span>`;
+  return `<details class="card tv-chart" data-tv-symbol="${esc(`BSE:${symbol}`)}"><summary>TradingView chart · BSE:${esc(symbol)}${note}</summary>
     <p class="small muted">Opening this loads TradingView’s chart from tradingview.com, which then sees the stock you view. TradingView only allows BSE prices in charts shown inside other apps, so this is the BSE listing; NSE prices can differ slightly. If the BSE code is different, search for the stock in the chart. It is for looking only: nothing on it counts as evidence for a check. Confirm prices in Kite before you buy.</p>
     <div class="tv-frame"></div>
     <p class="small muted"><a href="https://www.tradingview.com/chart/?symbol=NSE%3A${sym}" rel="noopener noreferrer" target="_blank">Open the NSE chart on tradingview.com</a> · Chart by TradingView</p></details>`;
@@ -747,7 +926,8 @@ function scheduleText(s) {
 }
 
 function strategyEditor(id) {
-  const base = id === 'new' ? { id: '', name: '', description: '', enabled: true, items: [{ id: 'item-1', type: 'attest', label: '', required: true }] } : S.strategies.find((s) => s.id === id);
+  const w = S.meta.checklist.window;
+  const base = id === 'new' ? { id: '', name: '', description: '', enabled: true, bufferDays: w.defaultBuffer, expireDays: w.defaultExpire, items: [{ id: 'item-1', type: 'attest', stage: 'research', label: '', required: true }] } : S.strategies.find((s) => s.id === id);
   if (!base) return '<p>Strategy not found.</p>';
   const d = (drafts.strategy?.key === id ? drafts.strategy.value : null) ?? structuredClone(base);
   const kinds = Object.keys(S.meta.evidenceKinds);
@@ -758,18 +938,24 @@ function strategyEditor(id) {
       <div class="grid">${field('Id (letters, digits, dashes)', `<input name="id" required value="${esc(d.id)}" ${id === 'new' ? '' : 'readonly'}>`)}${field('Name', `<input name="name" required value="${esc(d.name)}">`)}</div>
       ${field('Description', `<input name="description" value="${esc(d.description)}">`)}
       <label class="check"><input type="checkbox" name="enabled" ${d.enabled ? 'checked' : ''}> <span>Agents can use this strategy</span></label>
+      <fieldset class="window" data-info="window"><legend>Research window</legend>
+        <div class="grid">${field('Buffer days', num('bufferDays', d.bufferDays ?? w.defaultBuffer, `required step="1" min="${w.minBuffer}" max="${w.maxExpire}"`))}${field('Expire days', num('expireDays', d.expireDays ?? w.defaultExpire, `required step="1" min="${w.minBuffer}" max="${w.maxExpire}"`))}</div>
+        <p class="small muted">${esc(windowText(strategyWin(d)))} Buffer at least ${w.minBuffer}, expire at most ${w.maxExpire}, and expire not below buffer.${d.bufferDays === 3 && d.expireDays === 5 ? '' : ' Example: buffer 3, expire 5: research ticked on Monday counts Thursday to Saturday.'}</p>
+        <p class="small muted">Every strategy needs at least one required research item (a “you answer” or evidence item, not a fixed rule).</p></fieldset>
       <h2>Checklist <span class="small muted">${d.items.length} items</span></h2>
       ${field('Add from checklist library', `<select name="libraryPick"><option value="">Choose a check or a whole group…</option>${S.meta.checklist.groups.map((g) => `<optgroup label="${esc(g.title)}"><option value="group:${esc(g.id)}">➕ All ${g.items.length} checks in “${esc(g.title)}”</option>${g.items.map((i) => `<option value="item:${esc(i.id)}" ${d.items.some((x) => x.id === i.id) ? 'disabled' : ''}>${esc(i.label)}</option>`).join('')}</optgroup>`).join('')}</select>`, 'Already added checks are greyed out.')}
       ${d.items.map((it, n) => `<fieldset class="item-row"><legend>Item ${n + 1}${it.group ? ` · ${esc(groupName(it.group, S.meta.checklist))}` : ''}</legend><div class="grid">
         ${field('Id', `<input data-item="id" value="${esc(it.id)}" required>`)}
         ${field('Type', `<select data-item="type">${options([['attest', 'You answer yes/no'], ['evidence', 'Needs evidence'], ['rule', 'Fixed rule']], it.type)}</select>`)}
         ${field('Group', `<select data-item="group">${options([['', 'No group'], ...S.meta.checklist.groups.map((g) => [g.id, g.title]), ...(it.group && !S.meta.checklist.groups.some((g) => g.id === it.group) ? [[it.group, it.group]] : [])], it.group ?? '')}</select>`)}
-        ${field('When', `<select data-item="stage">${options([['research', 'Research (1–5 days before)'], ['before', 'Just before buying']], it.stage ?? 'before')}</select>`)}
+        ${field('When', `<select data-item="stage">${options([['research', 'Research (on Prepare, waits the buffer)'], ['before', 'Just before buying']], it.stage ?? 'before')}</select>`)}
         ${it.type === 'evidence' ? field('Evidence for', `<select data-item="scope">${options([['stock', 'This stock'], ['market', 'Whole market (MARKET)']], it.scope ?? 'stock')}</select>`) : ''}
         <input type="hidden" data-item="help" value="${esc(it.help ?? '')}">
         ${it.type === 'rule' ? field('Rule', `<select data-item="rule">${options(S.meta.ruleKinds.map((r) => [r, r]), it.rule)}</select>`) + field('Value', `<input data-item="value" value="${esc(it.value ?? '')}">`, 'regularOnly: true') : field('Label', `<input data-item="label" value="${esc(it.label)}" required>`)}
-        ${it.type === 'evidence' ? field('Evidence kind', `<select data-item="kind">${options(kinds.map((k) => [k, k]), it.kind)}</select>`) + field('Max age (days, 0 = today)', `<input data-item="maxAgeDays" type="number" min="0" max="30" step="1" value="${esc(it.maxAgeDays ?? 0)}">`) : ''}
+        ${it.type === 'evidence' ? field('Evidence kind', `<select data-item="kind">${options(kinds.map((k) => [k, k]), it.kind)}</select>`) : ''}
+        ${it.type === 'evidence' && (it.stage ?? 'before') !== 'research' ? field('Max age (days, 0 = today)', `<input data-item="maxAgeDays" type="number" min="0" max="30" step="1" value="${esc(it.maxAgeDays ?? 0)}">`) : ''}
         ${it.type !== 'rule' ? field('Required', `<input type="checkbox" data-item="required" ${it.required !== false ? 'checked' : ''}>`) : ''}
+        ${it.type !== 'rule' ? field('Uses one exchange’s prices', `<input type="checkbox" data-item="exchangeBound" ${isBound(it) ? 'checked' : ''}>`) : ''}
         </div><button type="button" class="btn small-btn" data-action="remove-item" data-n="${n}">Remove item</button></fieldset>`).join('')}
       <div class="actions"><button type="button" class="btn" data-action="add-item">Add item</button><button type="button" class="btn" data-action="refresh-items">Update form for changed types</button></div>
       ${pinField()}<button class="btn primary">Save strategy</button>
@@ -788,7 +974,7 @@ function readStrategy(form) {
     if (it.value !== undefined) it.value = it.value === 'true' ? true : Number(it.value);
     return it;
   });
-  return { id: top.id, name: top.name, description: top.description, enabled: top.enabled, items, pin: top.pin };
+  return { id: top.id, name: top.name, description: top.description, enabled: top.enabled, bufferDays: top.bufferDays, expireDays: top.expireDays, items, pin: top.pin };
 }
 
 function playbookEditor(id) {
@@ -815,21 +1001,6 @@ function playbookEditor(id) {
       <label class="check"><input type="checkbox" name="enabled" ${base.enabled ? 'checked' : ''}> <span>On</span></label>
       ${pinField()}<button class="btn primary">Save playbook</button>
     </form>`;
-}
-
-/** Fetch a stock’s checklist status for the Prepare page, then redraw if still on it. */
-async function loadPrepare(strategyId, symbol, key) {
-  if (loadPrepare.pending === key) return;
-  loadPrepare.pending = key;
-  try {
-    const r = await api('/api/action/research.status', { method: 'POST', body: JSON.stringify({ strategyId, symbol }) });
-    drafts.prepare = { key, data: r.result };
-    if (location.hash.startsWith('#/prepare')) render();
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    loadPrepare.pending = null;
-  }
 }
 
 async function loadLedger() {
@@ -865,7 +1036,7 @@ function describe(e) {
     'strategy.saved': () => `Saved strategy ${d.name} (v${d.version})`,
     'agent.added': () => `Added agent ${d.name} (${d.scope})`,
     'agent.updated': () => `Updated agent ${S.agents.find((a) => a.id === d.id)?.name ?? d.id}${d.scope ? ` → ${d.scope}` : ''}${d.revoked ? ' (revoked)' : ''}`,
-    'evidence.added': () => `Evidence for ${d.symbol}: ${d.kind}${d.price ? ` ${price(d.price)}` : ''}`,
+    'evidence.added': () => `Record for ${d.symbol}: ${d.kind}${d.exchange ? ` (${d.exchange})` : ''}${d.price ? ` ${price(d.price)}` : ''}`,
     'note.added': () => `Note: ${d.title}`,
     'intent.submitted': () => `Request: ${d.kind} ${d.symbol}`,
     'intent.approved': () => `Approved request ${d.id}`,
@@ -882,7 +1053,12 @@ function describe(e) {
     'task.failed': () => 'Task failed',
     'task.expired': () => 'Task expired',
     'pin.changed': () => 'Approval PIN changed',
-    'research.answered': () => `Research checklist answers for ${d.symbol}`,
+    'research.answered': () => `Research checklist answers for ${d.symbol} (old style, no longer counted)`,
+    'prepare.marked': () => `${d.yes ? 'Prepared' : 'Removed the mark on'} “${libraryItem(String(d.key).split(':').at(-1))?.label ?? d.key}” for ${d.symbol}${d.exchange ? ` on ${d.exchange}` : ''}`,
+    'evidence.verified': () => `Verified a record (good until ${d.goodUntil})`,
+    'evidence.corrected': () => `Corrected a ${d.kind} record for ${d.symbol}: ${d.reason}`,
+    'evidence.flagged': () => `Flagged a record: ${d.reason}`,
+    'recommendation.added': () => `View on ${d.symbol} (${d.exchange}): ${CALL[d.call]?.[0] ?? d.call}`,
     'item.trashed': () => `Moved ${an} ${kind} to the Trash`,
     'item.restored': () => `Restored ${an} ${kind} from the Trash`,
     'item.purged': () => `Deleted ${an} ${kind} forever`,
@@ -908,16 +1084,29 @@ const forms = {
     location.hash = `#/request/${r.id}`;
   },
   async quote(form, data) {
-    await act('evidence.add', { kind: 'quote', symbol: form.dataset.symbol || data.symbol, price: data.price });
-    toast('Price saved. It counts for 5 minutes.');
+    const exchange = data.exchange || form.dataset.exchange || 'NSE';
+    await act('evidence.add', { kind: 'quote', symbol: form.dataset.symbol || data.symbol, exchange, price: data.price });
+    toast(`${exchange} price saved. It counts for 5 minutes.`);
   },
   async funding(form, data) {
     await act('evidence.add', { kind: 'funding', symbol: form.dataset.symbol || data.symbol, ...fundingInput(data), summary: data.summary || 'Kite MTF list' });
     toast('MTF requirement saved for today.');
   },
   async evidence(form, data) {
-    await act('evidence.add', { kind: data.kind, symbol: form.dataset.symbol || data.symbol, summary: data.summary, sources: data.source ? [data.source] : [] });
-    toast('Evidence saved.');
+    // The exchange is kept only for prices and chart readings; the server ignores it for other kinds.
+    await act('evidence.add', { kind: data.kind, symbol: form.dataset.symbol || data.symbol, summary: data.summary, sources: data.source ? [data.source] : [], exchange: data.exchange, goodUntil: data.goodUntil || undefined });
+    toast('Record saved. You entered it, so it counts until its good-until date.');
+  },
+  async 'prep-evidence'(form, data) {
+    const d = form.dataset;
+    const { id } = await act('evidence.add', { kind: d.kind, symbol: d.recordSymbol, topic: d.itemid, summary: data.summary, sources: data.source ? [data.source] : [], exchange: data.exchange ?? d.exchange, goodUntil: data.goodUntil || undefined });
+    await act('prepare.mark', { symbol: d.symbol, strategyId: d.strategy || undefined, itemId: d.itemid, exchange: d.exchange, evidenceId: id, yes: true });
+    toast('Record saved and used for this item. It counts after the wait.');
+  },
+  async correct(form, data) {
+    const { reason, goodUntil, ...fields } = data;
+    await act('evidence.correct', { corrects: form.dataset.id, reason, ...fields, ...(goodUntil ? { goodUntil } : {}) });
+    toast('Corrected. The old record stays in the history and no longer counts.');
   },
   async approve(form, data) {
     const answers = Object.fromEntries(Object.entries(data).filter(([k, v]) => k.startsWith('answer:') && v).map(([k]) => [k.slice(7), true]));
@@ -991,14 +1180,7 @@ const forms = {
     location.hash = `#/stock/${encodeURIComponent(data.symbol.trim().toUpperCase())}`;
   },
   async 'prepare-pick'(form, data) {
-    location.hash = `#/prepare/${encodeURIComponent(data.strategyId)}/${encodeURIComponent(data.symbol.trim().toUpperCase())}`;
-  },
-  async research(form, data) {
-    const answers = Object.fromEntries(Object.entries(data).filter(([k]) => k.startsWith('answer:')).map(([k, v]) => [k.slice(7), v]));
-    if (!Object.keys(answers).length) return toast('This strategy has no research items to tick.');
-    await act('research.save', { symbol: form.dataset.symbol, strategyId: form.dataset.strategy, answers });
-    drafts.prepare = null;
-    toast(`Research saved. It counts for ${S.meta.checklist.researchValidDays} days.`);
+    location.hash = `#/prepare/${encodeURIComponent(data.symbol.trim().toUpperCase())}/${data.exchange === 'BSE' ? 'BSE' : 'NSE'}`;
   },
   async resume(form, data) {
     await act('automation.resume', { pin: data.pin });
@@ -1048,7 +1230,14 @@ document.addEventListener('click', async (e) => {
       location.hash = '#/strategies/new';
       return;
     }
+    if (['confirm-evidence', 'verify-evidence', 'prepare-mark'].includes(action)) el.disabled = true; // one click is enough
     if (action === 'confirm-evidence') { await act('evidence.add', { confirms: el.dataset.id }); toast('Confirmed. It counts from now.'); }
+    if (action === 'verify-evidence') { await act('evidence.verify', { id: el.dataset.id }); toast('Verified. It counts until its good-until date.'); }
+    if (action === 'prepare-mark') {
+      const d = el.dataset;
+      await act('prepare.mark', { symbol: d.symbol, strategyId: d.strategy || undefined, itemId: d.itemid, exchange: d.exchange, evidenceId: d.evidence || undefined, yes: d.yes === '1' });
+      toast(d.yes === '1' ? 'Marked as checked. It counts only after the wait (the strategy’s buffer days).' : 'Mark removed. Prepare it again when you have checked it.');
+    }
     if (action === 'trash') {
       await act('trash.move', { kind: el.dataset.kind, id: el.dataset.id });
       toast('Moved to the Trash. You can restore it from the Trash page.');
@@ -1078,6 +1267,7 @@ document.addEventListener('click', async (e) => {
     }
   } catch (err) {
     toast(err.message, true);
+    if (el.isConnected) el.disabled = false;
   }
 });
 
@@ -1190,7 +1380,7 @@ function syncFunding(form) {
 // ---------- update check ----------
 
 /** Must match API_VERSION in src/version.js. Bump both when the page needs new server data. */
-const CLIENT_API = 3;
+const CLIENT_API = 4;
 const serverIsOld = () => (S?.meta?.api ?? 1) < CLIENT_API;
 
 /** The server keeps its code in memory; after an update it must be restarted. */
@@ -1205,7 +1395,9 @@ function restartBanner() {
 // ---------- routing ----------
 
 function render() {
-  const [route = 'today', ...args] = location.hash.replace(/^#\/?/, '').split('/');
+  let [route = 'today', ...args] = location.hash.replace(/^#\/?/, '').split('/');
+  // The Research page is gone: its parts live on Prepare, the stock pages and Today.
+  if (route === 'research') { history.replaceState(null, '', '#/stocks'); [route, args] = ['stocks', []]; }
   const page = pages[route] ?? pages.today;
   let html;
   try {

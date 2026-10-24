@@ -145,13 +145,19 @@ order itself. Each check says why it matters and where to look for free.
 
 Checks come in **two stages**:
 
-1. **Research** – can be done 1 to 5 days before you buy.
+1. **Research** – done on the Prepare page days before you buy; it counts only inside the strategy’s window (default: from 3 to 5 days after you prepare it).
 2. **Just before buying** – must be checked on the day.
 
 Open **Strategies**. Each strategy uses a set of these checks:
 
 - **You answer** – you tick yes yourself when you approve.
-- **Evidence** – someone (you or Claude) must save proof, for example a news check from today.
+- **Evidence** – a record must back it, for example a news check from today. Records Claude
+  saves count only after you **verify** them.
+
+Each strategy also has a **research window**: **buffer days** (at least 3) is how long a prepared
+research item must wait before it counts, **expire days** (at most 21) is how long it keeps
+counting. Example: buffer 3, expire 5: research ticked on Monday counts Thursday to Saturday.
+Every strategy needs at least one required research item.
 - **Rule** – the app checks this by itself, for example "stop at most 8% below entry".
 
 The built-in strategies are **examples**, not advice. **Complete pre-trade checklist** has every
@@ -167,13 +173,23 @@ check (core ones required, the rest optional). You can edit any strategy, or cli
 Open VS Code → the `swing-desk-agent` folder → **Terminal → New Terminal** → `npm start`.
 Open <http://127.0.0.1:8790>.
 
-### Step 10b. Prepare a stock a few days ahead (stage 1)
+### Step 10b. Prepare a stock a few days ahead (stage 1, required)
 
-1. Open **Prepare**. Type the stock, choose the strategy, click **Show checklist**.
-2. Copy the ready-made request at the bottom into Claude Code. Claude researches every open item
-   and saves what it finds with sources. Market-wide checks are saved once under **MARKET**.
-3. Read what Claude found (Research page). Tick the research items you agree with and click
-   **Save research**. Your ticks count for **5 days**.
+Nothing can be approved until its research has been prepared **and has waited**.
+
+1. Open **Prepare**. Type the stock, keep the exchange on **NSE** (or pick BSE), click
+   **Show checklist**. Price and chart items count only on the exchange you prepare.
+2. Copy the ready-made request at the bottom into Claude Code. Claude reads the records you
+   already verified, researches what is missing, and saves what it finds with sources
+   (market-wide checks once under **MARKET**). It can also save its own wait/buy/hold/sell view.
+3. Go through the **Master list**. For a “you answer” item, click **I checked this**. For an
+   evidence item, click **Verify** on Claude’s record if it is right, then **Use this verified
+   record**, or **Add a record** yourself (its good-until date is filled in for you).
+4. Below, each strategy shows its window, what is still missing and the first day its research
+   all counts. Last come two views side by side: **Desk rules** and **Claude (written by a model ·
+   not verified)**. If they differ it says “The desk and Claude disagree”. Neither is advice.
+
+The TradingView chart on Prepare shows BSE prices only; nothing on it counts for NSE.
 
 ### Step 11. Ask Claude to research
 
@@ -185,7 +201,10 @@ In Claude Code, ask in plain words. Examples:
 
 > Use swing-desk. Check today's news for all my open lots and save it as evidence.
 
-What Claude saves appears in the browser under **Research**, marked *not verified*.
+What Claude saves appears on **Today** under **New from Claude**, on the stock’s page and on
+Prepare, marked *found, not verified*, with a **Verify** button. Once verified, a record is reused
+until its good-until date, so Claude does not search for it again. If a record is wrong, open the
+stock and click **Correct**: the old record stays in the history, marked corrected.
 
 ### Step 12. Get a trade idea checked
 
@@ -211,8 +230,11 @@ Fix anything orange:
    **"Kite shows ₹… now: confirm"**. Or type Kite's price yourself. A price counts for **5 minutes**.
 2. **MTF requirement** – in Kite, check the stock's MTF leverage for today. Confirm Claude's value
    or type it in as leverage or own cash %.
-3. **Your answers** – the checklist shows **1. Research** (already done if you used Prepare) and
-   **2. Just before buying**. Tick each remaining item only if it is really true today.
+3. **Claude’s on-the-day records** – click **Verify** next to each one that is right (news,
+   daily chart, whole-market checks).
+4. **Your answers** – the checklist shows **1. Research** (read-only: “Prepared on …”, from the
+   Prepare page) and **2. Just before buying**. Tick each on-the-day item only if it is really
+   true today.
 
 Type your PIN → **Approve**. Or write a reason → **Reject**.
 

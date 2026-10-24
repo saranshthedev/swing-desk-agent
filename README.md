@@ -7,7 +7,7 @@ real fill.
 
 - Works with any MCP model app (Claude Desktop, Claude Code, ChatGPT, local models). No model API key.
 - Zerodha Regular (CNC) and MTF charges, sizing from your loss limit and cash limit.
-- A 107-item pre-trade checklist in 15 groups (market, global, USDINR, oil and commodities, fundamentals, weekly/monthly demand-supply zones, volume, plan, money, order) split into research (1–5 days before) and on-the-day stages; each strategy picks from it.
+- A 107-item pre-trade checklist in 15 groups (market, global, USDINR, oil and commodities, fundamentals, weekly/monthly demand-supply zones, volume, plan, money, order) split into research (done on the Prepare page days before) and on-the-day stages; each strategy picks from it.
 - Scheduled playbooks that hand tasks to your model app in India time.
 - Every change is an entry in a tamper-evident ledger.
 - Node 24 only. No npm packages, no database server, no paid feed. MIT licence.
@@ -67,12 +67,24 @@ Change it with `SWING_DESK_DATA`, the port with `SWING_DESK_PORT`, backups with 
 
 ## How a trade flows
 
-1. An agent (or you) records evidence and sends a **buy request** naming a strategy.
-2. The desk recalculates shares and charges from *your* limits and runs every check: loss per
+1. **Prepare, days ahead (mandatory).** On the Prepare page, for one stock on one exchange
+   (NSE by default), you mark each research item as checked; evidence items rest on a record you
+   entered or verified. Each strategy has a research window: a mark counts only after its
+   **buffer** days (at least 3) and until its **expire** days (at most 21). Example: buffer 3,
+   expire 5: research ticked on Monday counts Thursday to Saturday. Prepare also shows the desk’s
+   rule-based wait/buy/hold/sell view next to Claude’s (marked not verified); neither is advice.
+2. Records are reused: Claude’s finds stay “found” until you verify them, each verified record
+   counts until its own good-until date, and a wrong record is corrected (the old one stays,
+   marked). Price and chart records name their exchange and count only for that exchange.
+3. An agent (or you) sends a **buy request** naming a strategy. It can be sent any time; it
+   cannot be approved until every required research item of its strategy is inside its window.
+4. The desk recalculates shares and charges from *your* limits and runs every check: loss per
    trade, gain vs risk, open lots, total open risk, borrowed money, weekly loss pause, a confirmed
    price from the last 5 minutes, today’s news, today’s MTF requirement, and the strategy’s checklist.
-3. You confirm the agent’s price (or type Kite’s), answer the checklist’s yes/no items, enter your PIN and approve.
-4. You place the order in Kite using the ticket, then record the actual fill. Sales are recorded
+5. On the day you verify Claude’s on-the-day records (news, chart, market), confirm the agent’s
+   price and MTF requirement (or type Kite’s), tick the on-the-day yes/no items, enter your PIN
+   and approve. Research items cannot be ticked on the request page.
+6. You place the order in Kite using the ticket, then record the actual fill. Sales are recorded
    the same way, with actual contract-note charges when you have them.
 
 ## Limits
