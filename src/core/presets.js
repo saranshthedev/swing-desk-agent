@@ -99,6 +99,12 @@ export const PLAN_DEFAULTS = Object.freeze({
   'ma-reclaim': { days: 20, buyType: 'regular' },
   'quality-pullback': { days: 40, buyType: 'regular' },
   'failed-breakdown': { days: 15, buyType: 'mtf', leverage: 2 },
+  'nr7-squeeze': { days: 8, buyType: 'mtf', leverage: 2 },
+  'fib-pullback': { days: 15, buyType: 'mtf', leverage: 2 },
+  'breakout-retest': { days: 15, buyType: 'mtf', leverage: 2 },
+  'sector-rotation': { days: 25, buyType: 'mtf', leverage: 2 },
+  'falling-wedge': { days: 20, buyType: 'mtf', leverage: 2 },
+  'golden-cross': { days: 40, buyType: 'regular' },
   default: { days: 10, buyType: 'mtf', leverage: 2 },
 });
 
