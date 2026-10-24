@@ -48,6 +48,7 @@ code, .mono { font-family: "IBM Plex Mono", Consolas, monospace; }
 .side { flex: 1 1 220px; max-width: 100%; background: var(--side); padding: 20px 14px; display: flex; flex-direction: column; gap: 2px; }
 .brand { display: flex; align-items: center; gap: 10px; color: #fff; font-weight: 600; padding: 0 8px 18px; }
 .side a { color: var(--side-ink); text-decoration: none; padding: 10px 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; min-height: 44px; }
+.side .nav-label { color: var(--side-ink); opacity: .65; font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; padding: 14px 12px 4px; }
 .side a[aria-current] { background: var(--side-active); color: #fff; font-weight: 500; }
 .side a:hover { color: #fff; }
 .count { background: #f59e0b; color: #111827; border-radius: 999px; padding: 0 8px; font-size: 12px; font-weight: 600; }
@@ -59,6 +60,7 @@ main { flex: 999 1 560px; min-width: 0; padding: 28px 36px 60px; max-width: 1240
   .side { flex: 1 1 100%; flex-direction: row; align-items: center; gap: 4px; padding: 8px 12px; overflow-x: auto; position: sticky; top: 0; z-index: 30; scrollbar-width: thin; }
   .brand { padding: 0 8px 0 0; flex: none; }
   .side a { padding: 8px 10px; white-space: nowrap; flex: none; gap: 6px; }
+  .side .nav-label { display: none; }
   .automation { margin: 0 0 0 4px; padding: 4px 4px 4px 10px; display: flex; align-items: center; gap: 8px; white-space: nowrap; flex: none; }
   .automation p { margin: 0; }
   .side .btn, .side .btn.danger { width: auto; min-height: 36px; }

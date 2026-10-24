@@ -202,7 +202,7 @@ try {
 
   // The sidebar has no Research page; old links land on Stocks.
   assert.equal(await js('!!document.querySelector(".side a[href=\\"#/research\\"]")'), false, 'no Research link');
-  assert.deepEqual(await js('[...document.querySelectorAll(".side a")].slice(0, 6).map((a) => a.dataset.route)'), ['today', 'stocks', 'prepare', 'plan', 'requests', 'positions']);
+  assert.deepEqual(await js('[...document.querySelectorAll(".side a")].map((a) => a.dataset.route)'), ['today', 'stocks', 'prepare', 'plan', 'requests', 'positions', 'settings', 'agents', 'checklist', 'strategies', 'playbooks', 'ledger', 'trash']);
   await go('#/research');
   await until(() => js('location.hash === "#/stocks"'), '#/research lands on Stocks');
   await waitText('Your stocks');
