@@ -87,6 +87,12 @@ export const PLAN_DEFAULTS = Object.freeze({
   'support-bounce': { days: 10, buyType: 'mtf', leverage: 2 },
   'mean-reversion': { days: 8, buyType: 'regular' },
   smc: { days: 10, buyType: 'mtf', leverage: 2 },
+  'gap-hold': { days: 7, buyType: 'regular' },
+  vcp: { days: 15, buyType: 'mtf', leverage: 2 },
+  'bull-flag': { days: 12, buyType: 'mtf', leverage: 2 },
+  'wyckoff-spring': { days: 18, buyType: 'regular' },
+  'rs-leader': { days: 25, buyType: 'regular' },
+  'double-bottom': { days: 18, buyType: 'regular' },
   default: { days: 10, buyType: 'mtf', leverage: 2 },
 });
 

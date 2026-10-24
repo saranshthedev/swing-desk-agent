@@ -158,7 +158,7 @@ test('research evidence has no age limit', () => {
 
 test('built-ins validate and were bumped', () => {
   const version = Object.fromEntries(BUILTIN_STRATEGIES.map((s) => [s.id, s.version]));
-  assert.deepEqual(version, { breakout: 3, pullback: 3, results: 3, trend: 1, 'support-bounce': 1, 'mean-reversion': 1, smc: 1, complete: 3 });
+  assert.deepEqual(version, { breakout: 3, pullback: 3, results: 3, trend: 1, 'support-bounce': 1, 'mean-reversion': 1, smc: 1, 'gap-hold': 1, vcp: 1, 'bull-flag': 1, 'wyckoff-spring': 1, 'rs-leader': 1, 'double-bottom': 1, complete: 3 });
   for (const s of BUILTIN_STRATEGIES) {
     assert.doesNotThrow(() => validateStrategy(s), s.id);
     assert.ok(hasRequiredResearch(s), s.id);

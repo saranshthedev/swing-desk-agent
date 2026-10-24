@@ -160,7 +160,7 @@ counting. Example: buffer 3, expire 5: research ticked on Monday counts Thursday
 Every strategy needs at least one required research item.
 - **Rule** – the app checks this by itself, for example "stop at most 8% below entry".
 
-The built-in strategies are **examples**, not advice: Breakout from a base, Pullback in an uptrend, After-results momentum, Trend following, Support bounce (demand zone), Mean reversion (oversold) and Smart Money Concepts (SMC).
+The built-in strategies are **examples**, not advice: Breakout from a base, Pullback in an uptrend, After-results momentum, Trend following, Support bounce (demand zone), Mean reversion (oversold), Smart Money Concepts (SMC), Gap and hold, Tight base (volatility contraction), Bull flag continuation, Wyckoff spring (accumulation), Relative-strength leader and Double bottom reversal.
 Each has its own required research items to prepare 3 to 5 days ahead. The SMC checks (market structure, order blocks, fair value gaps, liquidity) are in the Checklist library's "Smart Money Concepts" group. **Complete pre-trade checklist** has every
 check (core ones required, the rest optional). You can edit any strategy, or click
 **Make my own strategy from this list** on the Checklist page and remove what you do not need.
