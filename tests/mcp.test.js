@@ -166,3 +166,53 @@ test('list_evidence never shows trashed or deleted-forever records, and refuses 
   assert.equal(refused.isError, true);
   assert.doesNotMatch(refused.content[0].text, /trashed"|purged/);
 });
+
+test('add_structured_note needs draft access, counts as a write and returns warnings', () => {
+  const d = desk();
+  const args = { symbol: 'abc', section: 'swot', text: 'Strengths:\nGood\nnot a heading line' };
+  assert.match(client(d, d.addAgent('read').key).tool('add_structured_note', args).content[0].text, /needs draft access/);
+  const c = client(d, d.addAgent('draft', { writesPerDay: 1 }).key);
+  const r = c.tool('add_structured_note', args);
+  assert.equal(r.isError, undefined);
+  assert.ok(r.structuredContent.id);
+  assert.ok(Array.isArray(r.structuredContent.warnings));
+  assert.match(c.tool('add_structured_note', args).content[0].text, /Daily write limit/);
+  const e = client(d, d.addAgent('draft').key);
+  assert.equal(e.tool('add_structured_note', { ...args, section: 'bogus' }).isError, true);
+  assert.equal(e.tool('add_structured_note', { symbol: 'ABC', section: 'overview', exchange: 'XX', text: 'VWAP\t1' }).isError, true);
+});
+
+test('list_notes with section returns current records only; markup stays as given; trashed and purged hidden', () => {
+  const d = desk();
+  const c = client(d, d.addAgent('draft').key);
+  const text = 'Strengths:\n<img src=x onerror=1>';
+  const first = c.tool('add_structured_note', { symbol: 'ABC', section: 'swot', text }).structuredContent.id;
+  const list = (args) => c.tool('list_notes', args).structuredContent.result;
+  const rows = list({ section: 'swot' });
+  assert.deepEqual(rows.map((n) => n.id), [first]);
+  assert.deepEqual(rows[0].data.strengths, ['<img src=x onerror=1>']);
+  const second = c.tool('add_structured_note', { symbol: 'ABC', section: 'swot', text: 'Strengths:\nNew' }).structuredContent.id;
+  assert.deepEqual(list({ section: 'swot' }).map((n) => n.id), [second]);
+  // without section the plain list still works and shows structured records with their fields
+  c.tool('add_note', { symbol: 'ABC', title: 'plain', body: 'hello' });
+  const all = list({});
+  assert.ok(all.some((n) => n.body === 'hello'));
+  assert.ok(all.some((n) => n.id === second && n.section === 'swot' && n.data && n.title === 'SWOT' && n.asOf));
+  const other = c.tool('add_structured_note', { symbol: 'XYZ', section: 'results', text: 'x\tMar 2026\nRevenue\t10' }).structuredContent.id;
+  d.owner(C.moveToTrash, { kind: 'note', id: second });
+  d.owner(C.moveToTrash, { kind: 'note', id: other });
+  d.owner(C.purgeFromTrash, { kind: 'note', id: other });
+  for (const args of [{ section: 'swot' }, { section: 'results' }, {}, { symbol: 'XYZ' }]) {
+    const ids = list(args).map((n) => n.id);
+    assert.equal(ids.includes(second) || ids.includes(other), false, JSON.stringify(args));
+  }
+  assert.deepEqual(list({ section: 'swot' }), []);
+  assert.equal(c.tool('list_notes', { section: 'bogus' }).isError, true);
+});
+
+test('no tool name suggests verifying, correcting or marking', () => {
+  const d = desk();
+  const names = client(d, d.addAgent('propose').key).tools();
+  assert.ok(names.includes('add_structured_note'));
+  for (const n of names) assert.doesNotMatch(n, /verify|correct|mark/);
+});

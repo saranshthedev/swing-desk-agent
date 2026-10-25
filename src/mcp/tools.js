@@ -8,6 +8,7 @@ import { SETTING_RULES, UserError } from '../core/settings.js';
 import { indiaDate } from '../core/time.js';
 import { LIBRARY_GROUPS, SOURCES, STAGES, WINDOW, MARKET } from '../core/checklist-library.js';
 import { researchStatus } from '../core/rules.js';
+import { SECTIONS } from '../core/sections.js';
 import { recordStatus } from '../core/knowledge.js';
 import { deskRecommendation, latestRecommendation } from '../core/prepare.js';
 
@@ -159,9 +160,14 @@ export const TOOLS = {
 
   list_notes: {
     level: 'read',
-    description: `Recent research notes. ${UNTRUSTED}`,
-    inputSchema: obj({ symbol, limit: int('Max items, default 20') }),
-    run: (store, _a, args) => store.read((s) => recentFirst(s.notes, Math.min(100, args.limit ?? 20), (n) => !n.trashed && (!args.symbol || n.symbol === String(args.symbol).toUpperCase()))),
+    description: `Recent research notes. Structured sections (SWOT, Overview, Quarterly results, Shareholding pattern, Peers) have a "section" and parsed "data" instead of a body; pass section to get only the current version of that kind. Notes are never verified. Records the owner moved to the Trash are never shown. ${UNTRUSTED}`,
+    inputSchema: obj({ symbol, section: { type: 'string', enum: Object.keys(SECTIONS), description: 'Only current structured records of this kind' }, limit: int('Max items, default 20') }),
+    run: (store, _a, args) => {
+      if (args.section !== undefined && !Object.hasOwn(SECTIONS, args.section)) throw new UserError(`Section must be one of: ${Object.keys(SECTIONS).join(', ')}.`);
+      return store.read((s) => recentFirst(s.notes, Math.min(100, args.limit ?? 20), (n) => !n.trashed && !n.purged
+        && (!args.symbol || n.symbol === String(args.symbol).toUpperCase())
+        && (args.section === undefined || (n.section === args.section && !n.revisedBy))));
+    },
   },
 
   next_task: {
@@ -201,6 +207,25 @@ export const TOOLS = {
     description: 'Save a research note. It is shown to the owner as written by you, not verified.',
     inputSchema: obj({ symbol, title: str('Short title'), body: str('The note', 8000), sources: { type: 'array', items: str('Link or source name', 500), maxItems: 10 } }, ['title', 'body']),
     run: (store, agent, args) => store.run(`agent:${agent.id}`, (s, ctx) => C.addNote(s, args, ctx)),
+  },
+
+  add_structured_note: {
+    level: 'draft',
+    write: 'write',
+    description: `Save a structured section for a stock from text in the paste formats in docs/MCP.md. section is one of: ${Object.entries(SECTIONS).map(([k, v]) => `${k} = ${v}`).join('; ')}. overview and peers need exchange (NSE or BSE); the others must not have one. asOf is the India date the figures are from (default today). Saving again for the same stock (and exchange) replaces the current version; old versions stay in history. Returns the id and warnings about lines the desk could not read. It is shown to the owner as written by you and is never verified; it has no effect on approval or checks. Do not invent figures. ${UNTRUSTED}`,
+    inputSchema: obj({
+      symbol,
+      section: { type: 'string', enum: Object.keys(SECTIONS) },
+      text: str('The pasted text for this section', 20000),
+      exchange: { type: 'string', enum: ['NSE', 'BSE'], description: 'Required for overview and peers only' },
+      asOf: str('India date YYYY-MM-DD the figures are from, default today', 10),
+      sources: { type: 'array', items: str('Link or source name', 500), maxItems: 10 },
+    }, ['symbol', 'section', 'text']),
+    run: (store, agent, args) => {
+      if (typeof args.section !== 'string' || !Object.hasOwn(SECTIONS, args.section)) throw new UserError(`Section must be one of: ${Object.keys(SECTIONS).join(', ')}.`);
+      if (args.exchange !== undefined) exchangeOf(args.exchange);
+      return store.run(`agent:${agent.id}`, (s, ctx) => C.addSection(s, args, ctx));
+    },
   },
 
   add_evidence: {

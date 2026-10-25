@@ -23,6 +23,7 @@ import { RISK_PRESETS, AGENT_PRESETS, PLAYBOOK_TEMPLATES, PLAN_DEFAULTS, matchRi
 import { newId } from '../store/store.js';
 import { backupDir } from '../config.js';
 import { API_VERSION, codeChangedSinceStart } from '../version.js';
+import { SECTIONS, EXCHANGE_SECTIONS, parseSection, deriveSection, currentSection } from '../core/sections.js';
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), '../../web');
 const BIN = resolve(dirname(fileURLToPath(import.meta.url)), '../../bin/desk.js');
@@ -72,6 +73,25 @@ const ACTIONS = {
   'playbook.save': [true, owner(C.savePlaybook)],
   'evidence.add': [false, owner(C.addEvidence)],
   'note.add': [false, owner(C.addNote)],
+  'note.preview': [false, (store, body) => {
+    const { data, warnings } = parseSection(body.section, body.text);
+    return { data, warnings, derived: deriveSection(body.section, data, { symbol: String(body.symbol ?? '').trim().toUpperCase() }) };
+  }],
+  'note.section.add': [false, owner(C.addSection)],
+  'stock.snapshot': [false, (store, body) => store.read((s) => {
+    const symbol = String(body.symbol ?? '').trim().toUpperCase();
+    const exchange = body.exchange ?? 'NSE';
+    if (exchange !== 'NSE' && exchange !== 'BSE') throw new UserError('Exchange must be NSE or BSE.');
+    const sections = {};
+    for (const section of Object.keys(SECTIONS)) {
+      const ex = EXCHANGE_SECTIONS.has(section) ? exchange : undefined;
+      const current = currentSection(s, symbol, section, ex);
+      // Older versions, newest first. Never trashed or purged; never promoted to current.
+      const history = s.notes.filter((n) => n.section === section && n.symbol === symbol && (n.exchange ?? undefined) === ex && n.revisedBy && live(n) && !n.purged).reverse();
+      sections[section] = { current, derived: current ? deriveSection(section, current.data, { symbol }) : null, history };
+    }
+    return { sections };
+  })],
   'intent.submit': [false, owner(C.submitIntent)],
   'intent.approve': [true, owner(C.approveIntent)],
   'intent.reject': [false, owner(C.rejectIntent)],
@@ -112,6 +132,7 @@ export function stateView(store) {
     meta: {
       api: API_VERSION,
       restartNeeded: codeChangedSinceStart(),
+      sections: SECTIONS,
       settingRules: SETTING_RULES,
       evidenceKinds: EVIDENCE_KINDS,
       ruleKinds: Object.keys(RULES),

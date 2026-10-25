@@ -92,7 +92,7 @@ test('evidence.verify, correct and flag work without a PIN; old research routes 
     assert.ok(Array.isArray(state.recommendations));
     assert.ok(state.meta.checklist.window);
     assert.equal(state.meta.checklist.researchValidDays, undefined);
-    assert.equal(state.meta.api, 4);
+    assert.equal(state.meta.api, 5);
   } finally { t.server.close(); }
 });
 
@@ -112,5 +112,70 @@ test('prepare.status returns every live record for the stock and MARKET, even pa
     assert.equal(ids.includes(gone), false, 'trashed records are left out');
     assert.equal(r.records.find((e) => e.id === old).status, 'verified');
     assert.ok(r.records.every((e) => e.symbol === 'OLDCO' || e.symbol === 'MARKET'));
+  } finally { t.server.close(); }
+});
+
+const SWOT_TEXT = 'Strengths :\nGood growth\n--Weakness :\nNear 52 Week Low';
+const OVERVIEW_TEXT = 'VWAP\t100\n52 Week Low\t95\n52 Week High\t200\nTTM PE\t10\nSector PE\t20';
+
+test('note.preview parses without writing; note.section.add shows in stock.snapshot with history', async () => {
+  const t = await serve();
+  try {
+    const before = t.d.store.read((s) => s.seq);
+    const pv = await (await t.post('note.preview', { section: 'overview', text: OVERVIEW_TEXT })).json();
+    assert.equal(pv.result.data.rows.vwap, 100);
+    assert.ok(Array.isArray(pv.result.warnings));
+    assert.equal(pv.result.derived.referencePrice.value, 100);
+    assert.equal(t.d.store.read((s) => s.seq), before);
+
+    const add = await (await t.post('note.section.add', { symbol: 'abc', section: 'swot', text: SWOT_TEXT })).json();
+    assert.ok(add.result.id);
+    assert.ok(Array.isArray(add.result.warnings));
+    let snap = (await (await t.post('stock.snapshot', { symbol: 'ABC' })).json()).result;
+    assert.equal(snap.sections.swot.current.id, add.result.id);
+    assert.equal(snap.sections.swot.derived.counts.strengths, 1);
+    assert.deepEqual(snap.sections.swot.history, []);
+    assert.equal(snap.sections.results.current, null);
+
+    const second = await (await t.post('note.section.add', { symbol: 'ABC', section: 'swot', text: 'Strengths:\nA\nB' })).json();
+    snap = (await (await t.post('stock.snapshot', { symbol: 'ABC' })).json()).result;
+    assert.equal(snap.sections.swot.current.id, second.result.id);
+    assert.deepEqual(snap.sections.swot.history.map((h) => h.id), [add.result.id]);
+
+    // trashing the current leaves the section empty; the older version is not promoted
+    t.d.owner(C.moveToTrash, { kind: 'note', id: second.result.id });
+    snap = (await (await t.post('stock.snapshot', { symbol: 'ABC' })).json()).result;
+    assert.equal(snap.sections.swot.current, null);
+    assert.equal(snap.sections.swot.derived, null);
+    assert.deepEqual(snap.sections.swot.history.map((h) => h.id), [add.result.id]);
+    assert.ok(!JSON.stringify(snap).includes(`"id":"${second.result.id}"`));
+  } finally { t.server.close(); }
+});
+
+test('stock.snapshot keeps NSE and BSE overviews apart and validates the exchange', async () => {
+  const t = await serve();
+  try {
+    const nse = await (await t.post('note.section.add', { symbol: 'ABC', section: 'overview', exchange: 'NSE', text: OVERVIEW_TEXT })).json();
+    const bse = await (await t.post('note.section.add', { symbol: 'ABC', section: 'overview', exchange: 'BSE', text: 'VWAP\t101' })).json();
+    const get = async (ex) => (await (await t.post('stock.snapshot', { symbol: 'ABC', ...(ex ? { exchange: ex } : {}) })).json()).result.sections.overview;
+    assert.equal((await get()).current.id, nse.result.id);
+    assert.equal((await get('NSE')).current.id, nse.result.id);
+    const b = await get('BSE');
+    assert.equal(b.current.id, bse.result.id);
+    assert.deepEqual(b.history, []);
+    assert.equal((await t.post('stock.snapshot', { symbol: 'ABC', exchange: 'XX' })).status, 400);
+    assert.equal((await t.post('note.section.add', { symbol: 'ABC', section: 'nope', text: 'x' })).status, 400);
+  } finally { t.server.close(); }
+});
+
+test('structured note actions obey Origin and CSRF checks', async () => {
+  const t = await serve();
+  try {
+    const body = { symbol: 'ABC', section: 'swot', text: SWOT_TEXT };
+    for (const name of ['note.preview', 'note.section.add', 'stock.snapshot']) {
+      assert.equal((await t.post(name, body, { Origin: 'https://evil.example' })).status, 403, name);
+      assert.equal((await t.post(name, body, { 'X-CSRF': 'wrong' })).status, 403, name);
+    }
+    assert.equal(t.d.store.read((s) => s.notes.length), 0);
   } finally { t.server.close(); }
 });
