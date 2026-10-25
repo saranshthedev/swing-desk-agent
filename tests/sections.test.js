@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { SECTIONS, EXCHANGE_SECTIONS, parseSection, formatSection, deriveSection, currentSection } from '../src/core/sections.js';
 import * as C from '../src/core/commands.js';
 import { UserError } from '../src/core/settings.js';
+import { performance } from 'node:perf_hooks';
 import { desk } from './helpers.js';
 
 const OVERVIEW = `Open	692.55
@@ -132,8 +133,9 @@ test('overview numbers: rupee, percent, negatives, NA never NaN', () => {
   assert.equal(data.rows.beta, -0.4);
   assert.equal(data.rows.ttmPe, null);
   assert.equal(data.rows.pb, null);
-  assert.equal(data.rows.sectorPe, null);
-  assert.ok(warnings.includes('Could not read a value for “Sector PE”.'));
+  assert.equal(data.rows.sectorPe, undefined);
+  assert.equal(data.extra.length, 1);
+  assert.ok(warnings.some((w) => /Sector PE/.test(w)));
   assert.ok(!Object.values(data.rows).some(Number.isNaN));
   const dv = deriveSection('overview', data, {});
   assert.equal(dv.peVsSectorPct, null);
@@ -348,4 +350,45 @@ test('agent with draft access can add, counts as a write', () => {
   const rec = d.store.read((s) => s.notes.find((n) => n.id === r.id));
   assert.equal(rec.by, `agent:${ag.id}`);
   assert.throws(() => add(d, { text: 'garbage' }, ag.run), UserError);
+});
+
+test('20,000-character single line parses fast', () => {
+  const lines = ['a '.repeat(9990), 'Open ' + '1 '.repeat(9990), ' '.repeat(19_990) + 'x', '\t'.repeat(9_990) + 'x', '-'.repeat(19_990) + 'x', 'Strengths ' + '(a'.repeat(9_990)];
+  for (const section of Object.keys(SECTIONS)) {
+    for (const text of lines) {
+      const t0 = performance.now();
+      try { parseSection(section, text); } catch (e) { assert.ok(e instanceof UserError); }
+      const ms = performance.now() - t0;
+      assert.ok(ms < 200, `${section} took ${ms} ms`);
+    }
+  }
+});
+
+test('peers columns named like object properties', () => {
+  const { data } = parseSection('peers', '\tconstructor\ttoString\t__proto__\nAlpha\t1\t2\t3\nBeta\t3\t4\t5');
+  const d = deriveSection('peers', data, { symbol: 'zzz' });
+  assert.deepEqual(Object.keys(d.medians).sort(), ['__proto__', 'constructor', 'toString']);
+  assert.equal(Object.getOwnPropertyDescriptor(d.medians, '__proto__').value, 4);
+  assert.equal(d.medians.constructor, 2);
+  assert.equal(d.rows[0].vsMedianPct.toString, -33.33);
+  assert.equal(Object.getOwnPropertyDescriptor(d.rows[1].vsMedianPct, '__proto__').value, 25);
+});
+
+test('a noise line starting with a label does not overwrite its value', () => {
+  const { data, warnings } = parseSection('overview', 'Open 692.55\nOpen interest rising');
+  assert.equal(data.rows.open, 692.55);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Open interest rising/);
+  assert.equal(data.extra.length, 1);
+});
+
+test('more worked-out figures', () => {
+  const p = (text) => deriveSection('overview', parseSection('overview', text).data, {});
+  const out = p('LTP\t650\n52 Week Low\t500\n52 Week High\t800\nUC Limit\t600\nLC Limit\t540');
+  assert.equal(out.withinLimits, false);
+  assert.equal(out.nearLow52, false);
+  assert.equal(out.referencePrice.name, 'Last price');
+  assert.equal(out.aboveLow52Pct, 30);
+  assert.equal(out.belowHigh52Pct, 18.75);
+  assert.equal(p('LTP\t520\nLC Limit\t540\nUC Limit\t600').withinLimits, false);
 });

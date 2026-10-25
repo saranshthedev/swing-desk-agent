@@ -70,15 +70,28 @@ const OVERVIEW_LABELS = [
 const LABEL_KEY = new Map(OVERVIEW_LABELS.flatMap(([key, names]) => names.map((n) => [norm(n), key])));
 const KEY_LABEL = Object.fromEntries(OVERVIEW_LABELS.map(([key, names]) => [key, names[0]]));
 
+/** Is the text after a label a value we can read (a number, a number with a remark, a dash/NA, or nothing)? */
+function readable(rest) {
+  if (rest === '') return true;
+  if (/^(—|–|-|na|n\/a)$/i.test(rest)) return true;
+  const m = rest.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
+  return numOf(m ? m[1] : rest) !== null;
+}
+
+const MAX_LABEL_LINE = 200; // labels are short; longer lines are never label lines (keeps parsing linear)
+const MAX_LABEL_WORDS = 8;
+
 /** Find a known label at the start of a line: `{ key, rest }` or null. */
 function findLabel(line) {
+  if (line.length > MAX_LABEL_LINE) return null;
   const m = line.match(/^(.*?)(?:\t+|\s*:\s*|\s{2,})(.*)$/);
-  if (m && LABEL_KEY.has(norm(m[1]))) return { key: LABEL_KEY.get(norm(m[1])), rest: m[2].trim() };
+  if (m && LABEL_KEY.has(norm(m[1])) && readable(m[2].trim())) return { key: LABEL_KEY.get(norm(m[1])), rest: m[2].trim() };
   if (LABEL_KEY.has(norm(line))) return { key: LABEL_KEY.get(norm(line)), rest: '' };
   const words = line.split(/\s+/);
-  for (let i = words.length - 1; i >= 1; i--) {
+  for (let i = Math.min(words.length - 1, MAX_LABEL_WORDS); i >= 1; i--) {
     const head = words.slice(0, i).join(' ');
-    if (LABEL_KEY.has(norm(head))) return { key: LABEL_KEY.get(norm(head)), rest: words.slice(i).join(' ') };
+    const rest = words.slice(i).join(' ');
+    if (LABEL_KEY.has(norm(head)) && readable(rest)) return { key: LABEL_KEY.get(norm(head)), rest };
   }
   return null;
 }
@@ -354,18 +367,18 @@ function derivePeers(data, ctx) {
     ownIndex = labels.indexOf(sym);
     if (ownIndex < 0) ownIndex = labels.findIndex((l) => l.includes(sym));
   }
-  const medians = {};
-  data.columns.forEach((col, ci) => {
-    const m = median(data.rows.filter((_, i) => i !== ownIndex).map((r) => r.cells[ci]).filter(isNum));
-    if (m !== null) medians[col] = m;
+  // Maps by column index, then plain objects with own keys only (column names like "constructor" or "__proto__" are safe).
+  const medianAt = new Map();
+  data.columns.forEach((_, ci) => {
+    const m = median(data.rows.filter((_r, i) => i !== ownIndex).map((r) => r.cells[ci]).filter(isNum));
+    if (m !== null) medianAt.set(ci, m);
   });
-  const rows = data.rows.map((row, i) => {
-    const vsMedianPct = {};
-    data.columns.forEach((col, ci) => {
-      if (col in medians) vsMedianPct[col] = isNum(row.cells[ci]) && medians[col] !== 0 ? round2((row.cells[ci] / medians[col] - 1) * 100) : null;
-    });
-    return { label: row.label, own: i === ownIndex, vsMedianPct };
-  });
+  const medians = Object.fromEntries([...medianAt].map(([ci, m]) => [data.columns[ci], m]));
+  const rows = data.rows.map((row, i) => ({
+    label: row.label,
+    own: i === ownIndex,
+    vsMedianPct: Object.fromEntries([...medianAt].map(([ci, m]) => [data.columns[ci], isNum(row.cells[ci]) && m !== 0 ? round2((row.cells[ci] / m - 1) * 100) : null])),
+  }));
   return { ownRow: ownIndex >= 0 ? data.rows[ownIndex].label : null, medians, rows };
 }
 
