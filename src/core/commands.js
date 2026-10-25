@@ -14,6 +14,7 @@ import { LIBRARY_ITEMS, toStrategyItem } from './checklist-library.js';
 import { markExchange, markKey, preparable, recordSymbol } from './prepare.js';
 import { TRASH_KINDS, findItem } from './state.js';
 import { intentStatus } from './views.js';
+import { SECTIONS, EXCHANGE_SECTIONS, parseSection, currentSection } from './sections.js';
 
 export { EVIDENCE_KINDS };
 export const SCOPES = ['off', 'read', 'draft', 'propose'];
@@ -255,6 +256,35 @@ export function addNote(state, input, { newId }) {
     sources: sources(input.sources),
   };
   return { events: [{ type: 'note.added', data }], result: { id: data.id } };
+}
+
+/** A pasted section (SWOT, Overview, results, shareholding, peers). Saving again for the same stock (and exchange) makes a new version that replaces the old one as current. Never verified. */
+export function addSection(state, input, { newId, now }) {
+  const symbol = symbolOf(input.symbol);
+  const section = input.section;
+  if (typeof section !== 'string' || !Object.hasOwn(SECTIONS, section)) throw new UserError('Choose a section: swot, overview, results, shareholding or peers.');
+  let exchange;
+  if (EXCHANGE_SECTIONS.has(section)) {
+    if (input.exchange !== 'NSE' && input.exchange !== 'BSE') throw new UserError(`Say which exchange the ${SECTIONS[section]} numbers are from: NSE or BSE.`);
+    exchange = input.exchange;
+  } else if (input.exchange !== undefined && input.exchange !== null && input.exchange !== '') {
+    throw new UserError(`${SECTIONS[section]} is not tied to an exchange. Leave the exchange out.`);
+  }
+  const asOf = input.asOf === undefined || input.asOf === null || input.asOf === '' ? indiaDate(now) : pastDate(input.asOf, now, 'The as-of date');
+  const { data: parsed, warnings } = parseSection(section, input.text);
+  const previous = currentSection(state, symbol, section, exchange);
+  const data = {
+    id: newId('note'),
+    symbol,
+    section,
+    ...(exchange ? { exchange } : {}),
+    asOf,
+    title: SECTIONS[section],
+    data: parsed,
+    sources: sources(input.sources),
+    ...(previous ? { revises: previous.id } : {}),
+  };
+  return { events: [{ type: 'note.structured', data }], result: { id: data.id, warnings } };
 }
 
 /** A wait/buy/hold/sell call from the owner or an agent. Shown as not verified; never acted on. */

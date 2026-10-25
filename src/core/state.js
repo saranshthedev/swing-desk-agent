@@ -81,6 +81,11 @@ const reducers = {
     (ev.flags ??= []).push({ by: e.actor, at: e.at, reason: d.reason });
   },
   'note.added': (s, d, e) => { s.notes.push({ ...d, by: e.actor, at: e.at }); },
+  'note.structured': (s, d, e) => {
+    s.notes.push({ ...d, by: e.actor, at: e.at });
+    const old = d.revises && s.notes.find((n) => n.id === d.revises);
+    if (old) old.revisedBy = d.id;
+  },
 
   'intent.submitted': (s, d, e) => { s.intents[d.id] = { ...d, status: 'pending', by: e.actor, at: e.at }; },
   'intent.approved': (s, d, e) => { Object.assign(s.intents[d.id], { status: 'approved', decision: { ...d, at: e.at } }); },
@@ -134,7 +139,7 @@ export function findItem(state, kind, id) {
 export const live = (item) => !item.trashed;
 
 /** Event types an agent's daily write quota counts, and those its intent quota counts. */
-const WRITE_TYPES = new Set(['evidence.added', 'evidence.flagged', 'note.added', 'recommendation.added', 'task.completed', 'task.failed']);
+const WRITE_TYPES = new Set(['evidence.added', 'evidence.flagged', 'note.added', 'note.structured', 'recommendation.added', 'task.completed', 'task.failed']);
 
 export function apply(state, event) {
   const reducer = reducers[event.type];
