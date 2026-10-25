@@ -48,7 +48,7 @@ One new event: `note.structured`, data:
 - `revises` is computed by the command: the id of the current record for the same
   `(symbol, section, exchange)` if one exists. The reducer marks that old record `revisedBy: <new id>`.
   Structured records live in `state.notes` (with `section` set and no `body`) so Trash, ledger and
-  note lists keep working. **Current** = the newest live record (not trashed, not deleted) for the same `(symbol, section, exchange)`, ordered by saved time then id; every other live record is history. `revises`/`revisedBy` are recorded links only. Trashing the current version brings the previous one back (undo a bad save).
+  note lists keep working. **Current** = the newest live record (not trashed, not deleted) for the same `(symbol, section, exchange)`, ordered by saved time, then by save order; every other live record is history. `revises`/`revisedBy` are recorded links only. Trashing the current version brings the previous one back (undo a bad save).
 - Quota: `note.structured` counts as an agent write (add to `WRITE_TYPES`).
 
 ### Parsed shapes (`src/core/sections.js`, pure)
