@@ -16,6 +16,8 @@ const MAX_BULLET = 300;
 const MAX_BULLETS = 20;
 const MAX_ROWS = 40;
 const MAX_COLUMNS = 12;
+const MAX_EXTRA = 50;
+const MAX_TEXT_VALUE = 200;
 
 // ---------- shared helpers ----------
 
@@ -24,6 +26,19 @@ const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 const round2 = (n) => (Number.isFinite(n) ? Math.round(n * 100) / 100 : null);
 const clip = (s, n = 50) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+
+/** Cut a pasted label or text value to 200 characters; the first cut in a section adds one warning. */
+function textCapper(warnings) {
+  let warned = false;
+  return (t) => {
+    if (t.length <= MAX_TEXT_VALUE) return t;
+    if (!warned) {
+      warned = true;
+      warnings.push(`Some labels or text values were longer than ${MAX_TEXT_VALUE} characters and were shortened.`);
+    }
+    return t.slice(0, MAX_TEXT_VALUE);
+  };
+}
 
 /** A number from pasted text: commas, rupee signs, percent signs and spaces are ignored. Null if unreadable. */
 function numOf(value) {
@@ -108,6 +123,8 @@ function parseOverview(text) {
   const rows = {};
   const tags = {};
   const extra = [];
+  const cap = textCapper(warnings);
+  let extraSkipped = false;
   let pending = null; // label waiting for its value on a later line
   let last = null; // label that already has a value (a remark line may follow)
 
@@ -124,7 +141,7 @@ function parseOverview(text) {
     rows[key] = v.number;
     if (v.number === null) warnings.push(`Could not read a value for “${KEY_LABEL[key]}”.`);
     delete tags[key];
-    if (v.tag) tags[key] = v.tag;
+    if (v.tag) tags[key] = cap(v.tag);
     last = key;
   };
 
@@ -152,12 +169,17 @@ function parseOverview(text) {
         continue;
       }
     } else if (last && /^\(.*\)$/.test(line)) {
-      tags[last] = line.slice(1, -1).trim();
+      tags[last] = cap(line.slice(1, -1).trim());
+      continue;
+    }
+    if (extra.length >= MAX_EXTRA) {
+      if (!extraSkipped) warnings.push(`More than ${MAX_EXTRA} unread lines were skipped.`);
+      extraSkipped = true;
       continue;
     }
     warnings.push(`Could not read the line “${clip(line)}”.`);
     const split = line.match(/^(.*?)(?:\t+|\s{2,})(.*)$/);
-    extra.push(split ? { label: split[1].trim(), text: split[2].trim() } : { label: line, text: '' });
+    extra.push(split ? { label: cap(split[1].trim()), text: cap(split[2].trim()) } : { label: cap(line), text: '' });
   }
   dropPending();
   if (!Object.keys(rows).length) throw new UserError('I could not find any known Overview labels such as Open, VWAP or 52 Week Low in that text.');
@@ -248,6 +270,8 @@ function cellOf(raw) {
   return n === null ? t : n;
 }
 
+const NOT_A_TABLE = 'I could not read a table from that text. Paste the table with its header row, values separated by tabs.';
+
 function parseGrid(text) {
   const warnings = [];
   const rawLines = lines(text).filter((l) => l.trim());
@@ -261,9 +285,11 @@ function parseGrid(text) {
     warnings.push(`Only the first ${MAX_COLUMNS} columns are kept.`);
     columns = columns.slice(0, MAX_COLUMNS);
   }
+  if (!columns.length) throw new UserError(NOT_A_TABLE);
+  const cap = textCapper(warnings);
   const rows = [];
   for (const cells of body) {
-    const label = cells[0];
+    const label = cells[0] && cap(cells[0]);
     if (!label) {
       warnings.push('Skipped a row with no name.');
       continue;
@@ -274,9 +300,10 @@ function parseGrid(text) {
     }
     const values = cells.slice(1);
     if (values.length !== (dropFirst ? header.length - 1 : header.length)) warnings.push(`The row “${clip(label)}” has ${values.length} values but there are ${columns.length} columns; blanks were filled in or extras dropped.`);
-    rows.push({ label, cells: columns.map((_, i) => (i < values.length ? cellOf(values[i]) : null)) });
+    rows.push({ label, cells: columns.map((_, i) => (i < values.length ? (() => { const c = cellOf(values[i]); return typeof c === 'string' ? cap(c) : c; })() : null)) });
   }
   if (!rows.length) throw new UserError('I could not find any rows in that table.');
+  if (!rows.some((r) => r.cells.some((c) => c !== null))) throw new UserError(NOT_A_TABLE);
   return { data: { columns, rows }, warnings };
 }
 
@@ -416,7 +443,20 @@ export function deriveSection(section, data, ctx = {}) {
   }
 }
 
-/** The live record for a stock's section (and exchange): not in the Trash and not replaced by a newer one. */
+/**
+ * Every live (not trashed, not deleted) record for a stock's section (and exchange), newest first by
+ * saved time. Records saved at the same instant keep the order they were saved in (later is newer;
+ * ids are random so they cannot break the tie). The first is the current one; the rest are earlier versions.
+ */
+export function liveSections(state, symbol, section, exchange) {
+  return state.notes
+    .map((n, i) => [n, i])
+    .filter(([n]) => n.section === section && n.symbol === symbol && (n.exchange ?? undefined) === (exchange ?? undefined) && !n.trashed && !n.purged)
+    .sort(([a, i], [b, j]) => (a.at === b.at ? 0 : a.at < b.at ? 1 : -1) || j - i)
+    .map(([n]) => n);
+}
+
+/** The current record: the newest live one. Trashing it brings the previous version back. */
 export function currentSection(state, symbol, section, exchange) {
-  return state.notes.find((n) => n.section === section && n.symbol === symbol && (n.exchange ?? undefined) === (exchange ?? undefined) && !n.trashed && !n.purged && !n.revisedBy) ?? null;
+  return liveSections(state, symbol, section, exchange)[0] ?? null;
 }

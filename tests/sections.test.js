@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SECTIONS, EXCHANGE_SECTIONS, parseSection, formatSection, deriveSection, currentSection } from '../src/core/sections.js';
+import { SECTIONS, EXCHANGE_SECTIONS, parseSection, formatSection, deriveSection, currentSection, liveSections } from '../src/core/sections.js';
 import * as C from '../src/core/commands.js';
 import { UserError } from '../src/core/settings.js';
 import { performance } from 'node:perf_hooks';
@@ -304,7 +304,6 @@ test('addSection saves and revises', () => {
   assert.equal(cur.symbol, 'ABC');
   assert.equal(cur.by, 'owner');
   assert.equal(cur.exchange, undefined);
-  assert.equal(notes.filter((n) => !n.revisedBy).length, 1);
 });
 
 test('exchange sections track per exchange', () => {
@@ -332,13 +331,39 @@ test('asOf validation and default', () => {
   });
 });
 
-test('trashing the current leaves the section empty', () => {
+test('trashing the current brings the previous version back; restore picks the newest', () => {
   const d = desk();
-  add(d, {});
+  const cur = () => d.store.read((s) => currentSection(s, 'ABC', 'swot'));
+  const live = () => d.store.read((s) => liveSections(s, 'ABC', 'swot').map((n) => n.id));
+  const a = add(d, {});
   d.clock.now += 1000;
   const b = add(d, {});
   d.owner(C.moveToTrash, { kind: 'note', id: b.id });
-  assert.equal(d.store.read((s) => currentSection(s, 'ABC', 'swot')), null);
+  assert.equal(cur().id, a.id);
+  d.clock.now += 1000;
+  const c = add(d, {});
+  assert.equal(cur().id, c.id);
+  assert.equal(d.store.read((s) => s.notes.find((n) => n.id === c.id).revises), a.id);
+  d.owner(C.restoreFromTrash, { kind: 'note', id: b.id });
+  // b was saved before c, so c stays current and b is history
+  assert.equal(cur().id, c.id);
+  assert.deepEqual(live(), [c.id, b.id, a.id]);
+  d.clock.now += 1000;
+  const e = add(d, {});
+  assert.equal(d.store.read((s) => s.notes.find((n) => n.id === e.id).revises), c.id);
+  d.owner(C.moveToTrash, { kind: 'note', id: e.id });
+  d.owner(C.moveToTrash, { kind: 'note', id: c.id });
+  d.owner(C.moveToTrash, { kind: 'note', id: b.id });
+  d.owner(C.moveToTrash, { kind: 'note', id: a.id });
+  assert.equal(cur(), null);
+});
+
+test('same saved time: the one saved last is current', () => {
+  const d = desk();
+  const a = add(d, {});
+  const b = add(d, {});
+  assert.equal(d.store.read((s) => currentSection(s, 'ABC', 'swot')).id, b.id);
+  assert.deepEqual(d.store.read((s) => liveSections(s, 'ABC', 'swot').map((n) => n.id)), [b.id, a.id]);
 });
 
 test('agent with draft access can add, counts as a write', () => {
@@ -404,4 +429,34 @@ test('trashed sections are told apart in the Trash by exchange and as-of date', 
   assert.equal(labels[swot.id], 'ABC · SWOT · as of 2026-01-02');
   assert.match(labels[ov.id], /^ABC · Overview · BSE · as of \d{4}-\d{2}-\d{2}$/);
   assert.equal(labels[note.id], 'ABC · Plain');
+});
+
+test('grid parsers refuse prose', () => {
+  for (const section of ['results', 'shareholding', 'peers']) {
+    assert.throws(() => parseSection(section, 'I think this stock\nwill go up a lot'), UserError, section);
+  }
+  const g = parseSection('results', '\tMar 2026\tJun 2026\nRevenue\t10\t12');
+  assert.equal(g.data.rows.length, 1);
+  assert.throws(() => parseSection('results', '\tMar 2026\nRevenue\t—'), UserError);
+});
+
+test('overview keeps at most 50 unread lines and says so once', () => {
+  const junk = Array.from({ length: 60 }, (_, i) => `Mystery ${i}\tvalue ${i}`).join('\n');
+  const { data, warnings } = parseSection('overview', `Open\t10\n${junk}`);
+  assert.equal(data.extra.length, 50);
+  assert.equal(warnings.filter((w) => w === 'More than 50 unread lines were skipped.').length, 1);
+  const few = parseSection('overview', 'Open\t10\nMystery\tx');
+  assert.equal(few.data.extra.length, 1);
+  assert.ok(!few.warnings.some((w) => /More than 50/.test(w)));
+});
+
+test('long labels and text cells are cut to 200 characters with one warning', () => {
+  const long = 'x'.repeat(500);
+  const g = parseSection('peers', `\tPE\tNote\n${long}\t10\t${long}\nB\t12\t${long}`);
+  assert.equal(g.data.rows[0].label.length, 200);
+  assert.equal(g.data.rows[0].cells[1].length, 200);
+  assert.equal(g.warnings.filter((w) => /200 characters/.test(w)).length, 1);
+  const o = parseSection('overview', `Open\t10\n${long}\t${long}\nOther ${long}`);
+  assert.ok(o.data.extra.every((e) => e.label.length <= 200 && e.text.length <= 200));
+  assert.equal(o.warnings.filter((w) => /200 characters/.test(w)).length, 1);
 });

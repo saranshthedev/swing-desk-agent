@@ -206,6 +206,9 @@ test('list_notes with section returns current records only; markup stays as give
     const ids = list(args).map((n) => n.id);
     assert.equal(ids.includes(second) || ids.includes(other), false, JSON.stringify(args));
   }
+  // trashing the newest brings the first version back as the one current record
+  assert.deepEqual(list({ section: 'swot' }).map((n) => n.id), [first]);
+  d.owner(C.moveToTrash, { kind: 'note', id: first });
   assert.deepEqual(list({ section: 'swot' }), []);
   assert.equal(c.tool('list_notes', { section: 'bogus' }).isError, true);
 });

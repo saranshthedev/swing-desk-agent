@@ -389,7 +389,8 @@ const pages = {
     const full = prepData(sym, exchange)?.records;
     const evidence = (full ?? S.evidence).filter((e) => e.symbol === sym);
     // Pasted sections live in the Snapshot above; only those for the other exchange are listed here, as links.
-    const notes = S.notes.filter((n) => n.symbol === sym && (!n.section || (market ? true : n.exchange && n.exchange !== exchange && !n.revisedBy)));
+    const others = market ? [] : S.sections.filter((n) => n.symbol === sym && n.exchange && n.exchange !== exchange && isCurrentSection(n));
+    const notes = [...S.notes.filter((n) => n.symbol === sym), ...others].sort((a, b) => b.at.localeCompare(a.at));
     const quote = evidence.find((e) => e.kind === 'quote' && e.status === 'verified') ?? evidence.find((e) => e.kind === 'quote');
     const rq = paged(`stock-requests-${sym}`, intents);
     const ev = paged(`stock-evidence-${sym}`, evidence);
@@ -736,9 +737,10 @@ function snapSection(symbol, exchange, section, s) {
     ? `<div class="snap-current">${snapMeta(cur, section)}${sectionBody(section, cur.data, s.derived, ctx)}${sourcesList(cur.sources)}</div>`
     : `<p class="small muted">Nothing saved yet${SNAP_PRICE.has(section) ? ` for ${esc(exchange)}` : ''}. Use Paste or update.</p>`;
   const modify = cur ? `<button type="button" class="btn" data-action="section-modify" data-id="${esc(cur.id)}" data-draft="${esc(draftKey(symbol, exchange, section))}" data-asof="${esc(cur.asOf)}" data-source="${esc(cur.sources?.[0] ?? '')}"${SNAP_PRICE.has(section) ? ` data-exchange="${esc(cur.exchange ?? exchange)}"` : ''}>Modify</button>` : '';
-  const older = history.length ? `<details class="snap-history"><summary>Earlier versions (${history.length})</summary>
-    <p class="small muted">Kept as they were saved. Worked-out figures are shown for the current version only.</p>
-    ${history.map((h) => `<div class="snap-old">${snapMeta(h, section)}${sectionBody(section, h.data, null, ctx)}</div>`).join('')}</details>` : '';
+  const total = s?.historyCount ?? history.length;
+  const older = history.length ? `<details class="snap-history"><summary>Earlier versions (${total})</summary>
+    <p class="small muted">Kept as they were saved${total > history.length ? `; showing the newest ${history.length}` : ''}. Worked-out figures are shown for the current version only. If you move the current version to the Trash, the newest earlier one becomes current.</p>
+    ${history.map((h) => `<div class="snap-old">${snapMeta(h, section)}${sectionBody(section, h.data, null, ctx)}<div class="actions">${trashBtn('note', h.id, `earlier ${label}${SNAP_PRICE.has(section) ? ` · ${h.exchange ?? exchange}` : ''} · as of ${shortDate(h.asOf)} for ${symbol}`)}</div></div>`).join('')}</details>` : '';
   return `<section class="card snap-sec" data-section="${esc(section)}" data-fold="snap-${esc(section)}" data-info="snap-${esc(section)}"${SNAP_FOLDED.has(section) ? ' data-start-folded' : ''}>
     <div class="card-head"><h3>${esc(label)}${exTag}</h3>${cur ? trashBtn('note', cur.id, `${label} for ${symbol}`) : ''}</div>
     ${body}<div class="actions snap-tools">${pasteBox(symbol, exchange, section)}${modify}</div>${older}</section>`;
@@ -995,12 +997,17 @@ function lotsTable(lots, closed = false) {
   </tbody></table></div>`;
 }
 
+/** S.sections is newest first, so the first live record for a stock, section and exchange is the current one. */
+function isCurrentSection(n) {
+  return S.sections.find((x) => x.symbol === n.symbol && x.section === n.section && (x.exchange ?? '') === (n.exchange ?? '')).id === n.id;
+}
+
 function noteHtml(n) {
   // A pasted section has no body: one line that opens the Snapshot where its table is.
   if (n.section) {
     const href = `#/prepare/${encodeURIComponent(n.symbol)}/${n.exchange === 'BSE' ? 'BSE' : 'NSE'}`;
     return `<article class="note snap-note"><p><a href="${esc(href)}">${esc(sectionLabel(n.section))}${n.exchange ? ` · ${esc(n.exchange)}` : ''} · as of ${esc(shortDate(n.asOf))}</a>
-      <span class="small muted">${n.by === 'owner' ? 'Written by you' : 'Written by a model'}${n.revisedBy ? ' · an earlier version' : ''} · opens the Snapshot</span></p></article>`;
+      <span class="small muted">${n.by === 'owner' ? 'Written by you' : 'Written by a model'}${isCurrentSection(n) ? '' : ' · an earlier version'} · opens the Snapshot</span></p></article>`;
   }
   return `<article class="note"><div class="card-head"><h3>${n.symbol ? `${symLink(n.symbol)} · ` : ''}${esc(n.title)}</h3>${trashBtn('note', n.id, `note “${n.title}”`)}</div><p class="small muted">${byLine(n.by)} · ${when(n.at)}</p><p class="pre">${esc(n.body)}</p>${sourcesList(n.sources)}</article>`;
 }
@@ -1018,7 +1025,7 @@ function stockIndex() {
   for (const i of S.intents) touch(i.symbol, i.at, (s) => { if (i.status === 'pending' || i.status === 'approved') s.waiting++; });
   for (const l of S.lots) touch(l.symbol, l.date, (s) => { if (l.status === 'open') s.openLots++; });
   for (const e of S.evidence) touch(e.symbol, e.observedAt, (s) => { if (e.kind === 'quote' && !s.quote) s.quote = e; }); // newest first
-  for (const n of S.notes) touch(n.symbol, n.at);
+  for (const n of [...S.notes, ...S.sections]) touch(n.symbol, n.at);
   return [...map.values()].sort((a, b) => b.last.localeCompare(a.last));
 }
 
@@ -1548,7 +1555,7 @@ function syncFunding(form) {
 // ---------- update check ----------
 
 /** Must match API_VERSION in src/version.js. Bump both when the page needs new server data. */
-const CLIENT_API = 5;
+const CLIENT_API = 6;
 const serverIsOld = () => (S?.meta?.api ?? 1) < CLIENT_API;
 
 /** The server keeps its code in memory; after an update it must be restarted. */

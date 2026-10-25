@@ -23,7 +23,7 @@ import { RISK_PRESETS, AGENT_PRESETS, PLAYBOOK_TEMPLATES, PLAN_DEFAULTS, matchRi
 import { newId } from '../store/store.js';
 import { backupDir } from '../config.js';
 import { API_VERSION, codeChangedSinceStart } from '../version.js';
-import { SECTIONS, EXCHANGE_SECTIONS, parseSection, formatSection, deriveSection, currentSection } from '../core/sections.js';
+import { SECTIONS, EXCHANGE_SECTIONS, parseSection, formatSection, deriveSection, liveSections } from '../core/sections.js';
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), '../../web');
 const BIN = resolve(dirname(fileURLToPath(import.meta.url)), '../../bin/desk.js');
@@ -91,10 +91,9 @@ const ACTIONS = {
     const sections = {};
     for (const section of Object.keys(SECTIONS)) {
       const ex = EXCHANGE_SECTIONS.has(section) ? exchange : undefined;
-      const current = currentSection(s, symbol, section, ex);
-      // Older versions, newest first. Never trashed or purged; never promoted to current.
-      const history = s.notes.filter((n) => n.section === section && n.symbol === symbol && (n.exchange ?? undefined) === ex && n.revisedBy && live(n) && !n.purged).reverse();
-      sections[section] = { current, derived: current ? deriveSection(section, current.data, { symbol }) : null, history };
+      // Newest live record is current; every other live one is an earlier version (newest 20 are sent).
+      const [current = null, ...older] = liveSections(s, symbol, section, ex);
+      sections[section] = { current, derived: current ? deriveSection(section, current.data, { symbol }) : null, history: older.slice(0, HISTORY_LIMIT), historyCount: older.length };
     }
     return { sections };
   })],
@@ -117,6 +116,8 @@ const ACTIONS = {
   }],
 };
 
+const HISTORY_LIMIT = 20;
+
 export function stateView(store) {
   return store.read((s, now) => ({
     now,
@@ -130,7 +131,10 @@ export function stateView(store) {
     lots: Object.values(s.lots).filter(live).map(lotView).sort((a, b) => b.date.localeCompare(a.date)),
     evidence: recentFirst(s.evidence, 200, live).map((e) => ({ ...e, status: recordStatus(e, indiaDate(now)) })),
     recommendations: recentFirst(s.recommendations, 100, live),
-    notes: recentFirst(s.notes, 100, live),
+    notes: recentFirst(s.notes, 100, (n) => live(n) && !n.section),
+    // Pasted sections: one light line each (no parsed data); the full records come from stock.snapshot.
+    sections: recentFirst(s.notes, 200, (n) => live(n) && n.section)
+      .map(({ id, symbol, section, exchange, asOf, title, by, at, revisedBy }) => ({ id, symbol, section, exchange, asOf, title, by, at, revisedBy })),
     playbooks: Object.values(s.playbooks).filter(live),
     tasks: Object.values(s.tasks).filter(live).sort((a, b) => b.dueAt.localeCompare(a.dueAt)).slice(0, 50),
     trash: trashView(s),

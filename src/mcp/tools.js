@@ -8,7 +8,7 @@ import { SETTING_RULES, UserError } from '../core/settings.js';
 import { indiaDate } from '../core/time.js';
 import { LIBRARY_GROUPS, SOURCES, STAGES, WINDOW, MARKET } from '../core/checklist-library.js';
 import { researchStatus } from '../core/rules.js';
-import { SECTIONS } from '../core/sections.js';
+import { SECTIONS, currentSection } from '../core/sections.js';
 import { recordStatus } from '../core/knowledge.js';
 import { deskRecommendation, latestRecommendation } from '../core/prepare.js';
 
@@ -166,7 +166,7 @@ export const TOOLS = {
       if (args.section !== undefined && !Object.hasOwn(SECTIONS, args.section)) throw new UserError(`Section must be one of: ${Object.keys(SECTIONS).join(', ')}.`);
       return store.read((s) => recentFirst(s.notes, Math.min(100, args.limit ?? 20), (n) => !n.trashed && !n.purged
         && (!args.symbol || n.symbol === String(args.symbol).toUpperCase())
-        && (args.section === undefined || (n.section === args.section && !n.revisedBy))));
+        && (args.section === undefined || (n.section === args.section && currentSection(s, n.symbol, n.section, n.exchange)?.id === n.id))));
     },
   },
 

@@ -92,7 +92,7 @@ test('evidence.verify, correct and flag work without a PIN; old research routes 
     assert.ok(Array.isArray(state.recommendations));
     assert.ok(state.meta.checklist.window);
     assert.equal(state.meta.checklist.researchValidDays, undefined);
-    assert.equal(state.meta.api, 5);
+    assert.equal(state.meta.api, 6);
   } finally { t.server.close(); }
 });
 
@@ -142,12 +142,12 @@ test('note.preview parses without writing; note.section.add shows in stock.snaps
     assert.equal(snap.sections.swot.current.id, second.result.id);
     assert.deepEqual(snap.sections.swot.history.map((h) => h.id), [add.result.id]);
 
-    // trashing the current leaves the section empty; the older version is not promoted
+    // trashing the current brings the older version back as current
     t.d.owner(C.moveToTrash, { kind: 'note', id: second.result.id });
     snap = (await (await t.post('stock.snapshot', { symbol: 'ABC' })).json()).result;
-    assert.equal(snap.sections.swot.current, null);
-    assert.equal(snap.sections.swot.derived, null);
-    assert.deepEqual(snap.sections.swot.history.map((h) => h.id), [add.result.id]);
+    assert.equal(snap.sections.swot.current.id, add.result.id);
+    assert.equal(snap.sections.swot.derived.counts.strengths, 1);
+    assert.deepEqual(snap.sections.swot.history, []);
     assert.ok(!JSON.stringify(snap).includes(`"id":"${second.result.id}"`));
   } finally { t.server.close(); }
 });
@@ -197,5 +197,45 @@ test('note.section.text gives the canonical text of a saved section, never of a 
     assert.match((await gone.json()).error, /not found/);
     t.d.owner(C.purgeFromTrash, { kind: 'note', id: add.result.id });
     assert.equal((await t.post('note.section.text', { id: add.result.id })).status, 400);
+  } finally { t.server.close(); }
+});
+
+test('stock.snapshot keeps the newest 20 earlier versions and the full count', async () => {
+  const t = await serve();
+  try {
+    const ids = [];
+    for (let i = 0; i < 25; i++) {
+      t.d.clock.now += 1000;
+      ids.push((await (await t.post('note.section.add', { symbol: 'ABC', section: 'swot', text: `Strengths:
+V${i}` })).json()).result.id);
+    }
+    const sw = (await (await t.post('stock.snapshot', { symbol: 'ABC' })).json()).result.sections.swot;
+    assert.equal(sw.current.id, ids[24]);
+    assert.equal(sw.history.length, 20);
+    assert.equal(sw.historyCount, 24);
+    assert.deepEqual(sw.history.map((h) => h.id), ids.slice(4, 24).reverse());
+    const empty = (await (await t.post('stock.snapshot', { symbol: 'NONE' })).json()).result.sections.swot;
+    assert.equal(empty.historyCount, 0);
+  } finally { t.server.close(); }
+});
+
+test('structured saves do not crowd plain notes out of /api/state and carry no data there', async () => {
+  const t = await serve();
+  try {
+    const plain = t.d.owner(C.addNote, { symbol: 'ABC', title: 'plain one', body: 'hello' }).id;
+    for (let i = 0; i < 100; i++) {
+      t.d.clock.now += 1000;
+      t.d.owner(C.addSection, { symbol: 'ABC', section: 'swot', text: `Strengths:
+V${i}` });
+    }
+    const state = await (await fetch(`${t.base}/api/state`, { headers: { 'X-CSRF': t.csrf } })).json();
+    assert.ok(state.notes.some((n) => n.id === plain));
+    assert.ok(state.notes.every((n) => !n.section && !n.data));
+    assert.equal(state.sections.length, 100);
+    for (const x of state.sections) {
+      assert.deepEqual(Object.keys(x).filter((k) => ['data', 'sources', 'body'].includes(k)), []);
+      assert.equal(x.section, 'swot');
+    }
+    assert.ok(!JSON.stringify(state.sections).includes('V99'));
   } finally { t.server.close(); }
 });
