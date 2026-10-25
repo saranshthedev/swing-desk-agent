@@ -69,7 +69,8 @@ export function recentFirst(list, limit, filter = () => true) {
 function trashLabel(state, kind, x) {
   switch (kind) {
     case 'evidence': return `${x.symbol} · ${x.kind}${x.price ? ` ₹${x.price}` : x.summary ? `: ${x.summary.slice(0, 80)}` : ''}`;
-    case 'note': return `${x.symbol ? `${x.symbol} · ` : ''}${x.title}`;
+    // Pasted sections share a title per kind; the exchange and as-of date tell versions apart.
+    case 'note': return `${x.symbol ? `${x.symbol} · ` : ''}${x.title}${x.section ? `${x.exchange ? ` · ${x.exchange}` : ''} · as of ${x.asOf}` : ''}`;
     case 'request': return x.kind === 'buy' ? `Buy ${x.symbol}` : x.kind === 'exit' ? `Sell ${x.qty} ${x.symbol}` : 'Settings change';
     case 'lot': return `${x.symbol} · ${x.qty} shares bought ${x.date}`;
     case 'task': return `${state.playbooks[x.playbookId]?.name ?? 'Playbook'} job due ${x.dueAt.slice(0, 16).replace('T', ' ')} UTC`;

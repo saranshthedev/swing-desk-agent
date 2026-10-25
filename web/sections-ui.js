@@ -48,15 +48,16 @@ function overviewHtml(data, d) {
   const tags = data.tags ?? {};
   const ref = d?.referencePrice;
   const top = d ? `<p class="snap-ref">${ref ? `Reference price: <b>${esc(ref.name)} ${rupees(ref.value)}</b> <span class="small muted">(the desk uses the last price, else VWAP, else the previous close)</span>` : '<span class="muted">No last price, VWAP or previous close was pasted, so there are no worked-out figures.</span>'}</p>` : '';
+  const cols = d ? 3 : 2; // earlier versions have no worked-out figures, so no empty column
   const body = OVERVIEW_GROUPS.map(([group, list]) => {
     const present = list.filter(([key]) => Object.hasOwn(rows, key));
     if (!present.length) return '';
-    return `<tr class="snap-group"><th colspan="3" scope="rowgroup">${group}</th></tr>${present.map(([key, label, unit]) => `<tr><th scope="row">${label}</th>
+    return `<tr class="snap-group"><th colspan="${cols}" scope="rowgroup">${group}</th></tr>${present.map(([key, label, unit]) => `<tr><th scope="row">${label}</th>
       <td class="num mono">${overviewValue(rows[key], unit)}${Object.hasOwn(tags, key) ? ` <span class="small muted">(${esc(tags[key])})</span>` : ''}</td>
-      <td class="small">${esc(overviewNote(key, d))}</td></tr>`).join('')}`;
+      ${d ? `<td class="small">${esc(overviewNote(key, d))}</td>` : ''}</tr>`).join('')}`;
   }).join('');
   const extra = (data.extra ?? []).length ? `<h4>Other lines</h4><ul class="snap-extra small">${data.extra.map((e) => `<li>${esc(e.label)}${e.text ? `: ${esc(e.text)}` : ''}</li>`).join('')}</ul>` : '';
-  return `${top}<div class="table-wrap"><table class="snap-table snap-overview"><thead><tr><th>Item</th><th class="num">Value</th><th>Worked out by the desk</th></tr></thead><tbody>${body}</tbody></table></div>${extra}`;
+  return `${top}<div class="table-wrap"><table class="snap-table snap-overview"><thead><tr><th>Item</th><th class="num">Value</th>${d ? '<th>Worked out by the desk</th>' : ''}</tr></thead><tbody>${body}</tbody></table></div>${extra}`;
 }
 
 // ---------- SWOT ----------

@@ -687,7 +687,9 @@ const newerMarker = () => '<p class="prep-newer" role="status" hidden><button ty
 const SNAP_ORDER = ['overview', 'swot', 'results', 'shareholding', 'peers'];
 const SNAP_PRICE = new Set(['overview', 'peers']); // price-type: kept per exchange, stale after a week
 const SNAP_FOLDED = new Set(['results', 'shareholding', 'peers']);
-const snapDrafts = {}; // `${symbol}|${section}` → { text, exchange, asOf, source, open, preview }
+const snapDrafts = {}; // draftKey(…) → { text, exchange, asOf, source, open, preview }
+/** Overview and Peers keep one draft per exchange, so an NSE preview never shows on the BSE page. */
+const draftKey = (symbol, exchange, section) => (SNAP_PRICE.has(section) ? `${symbol}|${exchange}|${section}` : `${symbol}|${section}`);
 const sectionLabel = (section) => S.meta.sections?.[section] ?? section;
 /** “2026-10-25” → “25 Oct” (with the year when it is not this year). */
 function shortDate(date) {
@@ -707,11 +709,11 @@ function snapMeta(rec, section) {
 }
 
 function pasteBox(symbol, exchange, section) {
-  const key = `${symbol}|${section}`;
+  const key = draftKey(symbol, exchange, section);
   const d = snapDrafts[key] ?? {};
   const today = S.status.today;
   return `<details class="snap-paste" data-draft="${esc(key)}" ${d.open ? 'open' : ''}><summary class="btn">Paste or update</summary>
-    <form class="form" data-form="section-paste" data-section="${esc(section)}" data-symbol="${esc(symbol)}">
+    <form class="form" data-form="section-paste" data-section="${esc(section)}" data-symbol="${esc(symbol)}" data-exchange="${esc(exchange)}">
       <p class="small muted">Copy the ${esc(sectionLabel(section))} from the website and paste it as it comes. Preview shows what the desk read; nothing is saved until you click Save. Saving again later replaces it; earlier versions stay in history.</p>
       ${field('Text to paste', `<textarea name="text" rows="8" required spellcheck="false">${esc(d.text ?? '')}</textarea>`)}
       <div class="grid">
@@ -733,7 +735,7 @@ function snapSection(symbol, exchange, section, s) {
   const body = cur
     ? `<div class="snap-current">${snapMeta(cur, section)}${sectionBody(section, cur.data, s.derived, ctx)}${sourcesList(cur.sources)}</div>`
     : `<p class="small muted">Nothing saved yet${SNAP_PRICE.has(section) ? ` for ${esc(exchange)}` : ''}. Use Paste or update.</p>`;
-  const modify = cur ? `<button type="button" class="btn" data-action="section-modify" data-id="${esc(cur.id)}" data-draft="${esc(`${symbol}|${section}`)}" data-asof="${esc(cur.asOf)}"${SNAP_PRICE.has(section) ? ` data-exchange="${esc(cur.exchange ?? exchange)}"` : ''}>Modify</button>` : '';
+  const modify = cur ? `<button type="button" class="btn" data-action="section-modify" data-id="${esc(cur.id)}" data-draft="${esc(draftKey(symbol, exchange, section))}" data-asof="${esc(cur.asOf)}" data-source="${esc(cur.sources?.[0] ?? '')}"${SNAP_PRICE.has(section) ? ` data-exchange="${esc(cur.exchange ?? exchange)}"` : ''}>Modify</button>` : '';
   const older = history.length ? `<details class="snap-history"><summary>Earlier versions (${history.length})</summary>
     <p class="small muted">Kept as they were saved. Worked-out figures are shown for the current version only.</p>
     ${history.map((h) => `<div class="snap-old">${snapMeta(h, section)}${sectionBody(section, h.data, null, ctx)}</div>`).join('')}</details>` : '';
@@ -1299,8 +1301,8 @@ const forms = {
     toast('Note saved.');
   },
   async 'section-paste'(form, data, submitter) {
-    const { symbol, section } = form.dataset;
-    const key = `${symbol}|${section}`;
+    const { symbol, section, exchange: pageExchange } = form.dataset;
+    const key = draftKey(symbol, pageExchange, section);
     const d = (snapDrafts[key] ??= {});
     Object.assign(d, { text: data.text, exchange: data.exchange, asOf: data.asOf, source: data.source, open: true });
     if (submitter?.value === 'preview') {
@@ -1310,7 +1312,8 @@ const forms = {
     const r = await act('note.section.add', { symbol, section, text: data.text, ...(SNAP_PRICE.has(section) ? { exchange: data.exchange } : {}), asOf: data.asOf || undefined, sources: data.source ? [data.source] : [] });
     delete snapDrafts[key];
     const skipped = r.warnings?.length ?? 0;
-    toast(`Saved. Earlier versions stay in history.${skipped ? ` ${skipped} line(s) could not be read; use Preview to see which.` : ''}`);
+    const saved = SNAP_PRICE.has(section) && data.exchange !== pageExchange ? `Saved for ${data.exchange}. Open ${data.exchange} to see it.` : 'Saved.';
+    toast(`${saved} Earlier versions stay in history.${skipped ? ` ${skipped} line(s) could not be read; use Preview to see which.` : ''}`);
   },
   async 'stock-pick'(form, data) {
     location.hash = `#/stock/${encodeURIComponent(data.symbol.trim().toUpperCase())}`;
@@ -1378,7 +1381,7 @@ document.addEventListener('click', async (e) => {
       // Start from the saved text, written out the way the desk reads it.
       el.disabled = true;
       const r = await api('/api/action/note.section.text', { method: 'POST', body: JSON.stringify({ id: el.dataset.id }) });
-      snapDrafts[el.dataset.draft] = { text: r.result.text, exchange: el.dataset.exchange, asOf: el.dataset.asof, open: true, preview: null };
+      snapDrafts[el.dataset.draft] = { text: r.result.text, exchange: el.dataset.exchange, asOf: el.dataset.asof, source: el.dataset.source || undefined, open: true, preview: null };
     }
     if (action === 'prepare-mark') {
       const d = el.dataset;
@@ -1517,7 +1520,13 @@ document.addEventListener('input', (e) => {
 const snapDraftOf = (el) => { const key = el.closest?.('details.snap-paste')?.dataset.draft; return key ? (snapDrafts[key] ??= {}) : null; };
 document.addEventListener('input', (e) => {
   const d = e.target.form?.dataset.form === 'section-paste' && e.target.name ? snapDraftOf(e.target) : null;
-  if (d) d[e.target.name] = e.target.value;
+  if (!d) return;
+  d[e.target.name] = e.target.value;
+  // An old parsed table must never sit under new text.
+  if (e.target.name === 'text' && d.preview) {
+    d.preview = null;
+    e.target.form.querySelector('.snap-preview')?.remove();
+  }
 });
 document.addEventListener('toggle', (e) => {
   if (!e.target.matches?.('details.snap-paste')) return;

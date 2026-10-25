@@ -5,6 +5,7 @@ import * as C from '../src/core/commands.js';
 import { UserError } from '../src/core/settings.js';
 import { performance } from 'node:perf_hooks';
 import { desk } from './helpers.js';
+import { trashView } from '../src/core/views.js';
 
 const OVERVIEW = `Open	692.55
 Previous Close	694.05
@@ -391,4 +392,16 @@ test('more worked-out figures', () => {
   assert.equal(out.aboveLow52Pct, 30);
   assert.equal(out.belowHigh52Pct, 18.75);
   assert.equal(p('LTP\t520\nLC Limit\t540\nUC Limit\t600').withinLimits, false);
+});
+
+test('trashed sections are told apart in the Trash by exchange and as-of date', () => {
+  const d = desk();
+  const swot = add(d, { asOf: '2026-01-02' });
+  const ov = add(d, { section: 'overview', exchange: 'BSE', text: 'VWAP	100' });
+  const note = d.owner(C.addNote, { symbol: 'ABC', title: 'Plain', body: 'x' });
+  for (const id of [swot.id, ov.id, note.id]) d.owner(C.moveToTrash, { kind: 'note', id });
+  const labels = Object.fromEntries(d.store.read((s) => trashView(s)).map((t) => [t.id, t.label]));
+  assert.equal(labels[swot.id], 'ABC · SWOT · as of 2026-01-02');
+  assert.match(labels[ov.id], /^ABC · Overview · BSE · as of \d{4}-\d{2}-\d{2}$/);
+  assert.equal(labels[note.id], 'ABC · Plain');
 });

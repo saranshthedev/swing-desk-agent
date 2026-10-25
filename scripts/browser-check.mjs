@@ -300,6 +300,21 @@ try {
   assert.match(overview, /as of \d{1,2} [A-Z][a-z]{2}, 0 days ago/);
   assert.match(overview, /Written by you/);
   assert.match(overview, /NSE/);
+  // Each exchange has its own paste box: an NSE preview never shows on the BSE page.
+  await paste('overview', OVERVIEW_PASTE.replace('VWAP\t692.13', 'VWAP\t700.00'), 'preview');
+  await until(async () => (await secText('overview', '.snap-preview')).includes('700'), 'second NSE preview');
+  await go('#/prepare/SAMPLE/BSE');
+  await until(() => js('document.querySelectorAll(".snapshot .snap-sec").length === 5 && document.querySelector("form[data-form=prepare-pick]").elements.exchange.value === "BSE"'), 'BSE Snapshot');
+  assert.deepEqual(await js(`(() => {
+    const box = document.querySelector(${JSON.stringify(`${sec('overview')} details.snap-paste`)});
+    return [box.open, box.querySelector('textarea').value, !!box.querySelector('.snap-preview'), box.querySelector('select[name=exchange]').value];
+  })()`), [false, '', false, 'BSE'], 'the BSE Overview box starts closed and empty');
+  await go('#/prepare/SAMPLE/NSE');
+  await until(async () => (await secText('overview', '.snap-preview')).includes('700'), 'NSE draft kept');
+  // Typing new text removes the old preview.
+  await js(`(() => { const t = document.querySelector(${JSON.stringify(`${sec('overview')} form[data-form=section-paste] textarea`)}); t.value += '\\n'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert.equal(await js(`!!document.querySelector(${JSON.stringify(`${sec('overview')} .snap-preview`)})`), false, 'preview cleared when the text changes');
+  await js(`document.querySelector(${JSON.stringify(`${sec('overview')} details.snap-paste`)}).open = false`);
   await paste('swot', SWOT_PASTE, 'save');
   assert.match(await toast(), /Saved/);
   await until(() => js(`document.querySelectorAll(${JSON.stringify(`${sec('swot')} .snap-current [data-list=strengths] li`)}).length === 4`), 'four strengths');
