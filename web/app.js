@@ -2,6 +2,7 @@
 
 import { INFO, INFO_IN } from './info.js';
 import { checklistHtml, libraryHtml, strategyItemsHtml, toStrategyItem, groupName } from './checklist-ui.js';
+import { sectionBody, warningsHtml } from './sections-ui.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const main = $('#main');
@@ -90,7 +91,7 @@ async function refresh() {
   S.agentNames ??= Object.fromEntries(S.agents.map((a) => [a.id, a.name]));
   S.recommendations ??= [];
   ledgerCache = null;
-  for (const c of Object.values(prepCache)) c.stale = true;
+  for (const c of [...Object.values(prepCache), ...Object.values(snapCache)]) c.stale = true;
 }
 
 function toast(message, bad = false) {
@@ -387,7 +388,8 @@ const pages = {
     // The full list for this stock comes with prepare.status; S.evidence is only the newest 200 of all stocks.
     const full = prepData(sym, exchange)?.records;
     const evidence = (full ?? S.evidence).filter((e) => e.symbol === sym);
-    const notes = S.notes.filter((n) => n.symbol === sym);
+    // Pasted sections live in the Snapshot above; only those for the other exchange are listed here, as links.
+    const notes = S.notes.filter((n) => n.symbol === sym && (!n.section || (market ? true : n.exchange && n.exchange !== exchange && !n.revisedBy)));
     const quote = evidence.find((e) => e.kind === 'quote' && e.status === 'verified') ?? evidence.find((e) => e.kind === 'quote');
     const rq = paged(`stock-requests-${sym}`, intents);
     const ev = paged(`stock-evidence-${sym}`, evidence);
@@ -399,6 +401,7 @@ const pages = {
       ${newerMarker()}
       <div class="cols">
         <div class="col-main">
+          ${market ? '' : snapshotCard(sym, exchange)}
           ${market ? '' : recSummary(sym, exchange)}
           ${open.length ? `<section class="card"><h2>Open lots <span class="small muted">${open.length}</span></h2>${open.map(lotCard).join('')}</section>` : ''}
           ${market ? '' : `<section class="card"><h2>Requests <span class="small muted">${intents.length}</span></h2>${intents.length ? `<ul class="rows">${rq.items.map((i) => requestRow(i)).join('')}</ul>${rq.nav}` : '<p class="muted">No requests for this stock.</p>'}</section>`}
@@ -637,25 +640,32 @@ function newFromClaude() {
   </section>`;
 }
 
-// Prepare data comes from the server (prepare.status). Cached per stock and exchange; every
-// state refresh marks it stale, and the page shows the last copy while a fresh one loads.
+// Prepare data (prepare.status) and the Snapshot (stock.snapshot) come from the server. Cached per
+// stock and exchange; every state refresh marks them stale, and the page shows the last copy while
+// a fresh one loads.
 const prepCache = {};
-function prepData(symbol, exchange) {
+const snapCache = {};
+const LOADERS = new Map([[prepCache, 'prepare.status'], [snapCache, 'stock.snapshot']]);
+function cachedData(cache, symbol, exchange) {
   const key = `${symbol}|${exchange}`;
-  const c = prepCache[key];
-  if (!c || c.stale) loadPrep(symbol, exchange, key, !!c);
+  const c = cache[key];
+  if (!c || c.stale) loadCached(cache, symbol, exchange, key, !!c);
   return c?.data ?? null;
 }
-const loadingPrep = new Map(); // key → { again }: set when the data went stale during a load
-async function loadPrep(symbol, exchange, key, hadData) {
-  if (loadingPrep.has(key)) { loadingPrep.get(key).again = true; return; }
+const prepData = (symbol, exchange) => cachedData(prepCache, symbol, exchange);
+const snapData = (symbol, exchange) => cachedData(snapCache, symbol, exchange);
+const loading = new Map(); // action|key → { again }: set when the data went stale during a load
+async function loadCached(cache, symbol, exchange, key, hadData) {
+  const action = LOADERS.get(cache);
+  const jobKey = `${action}|${key}`;
+  if (loading.has(jobKey)) { loading.get(jobKey).again = true; return; }
   const job = { again: false };
-  loadingPrep.set(key, job);
+  loading.set(jobKey, job);
   try {
-    const r = await api('/api/action/prepare.status', { method: 'POST', body: JSON.stringify({ symbol, exchange }) });
+    const r = await api(`/api/action/${action}`, { method: 'POST', body: JSON.stringify({ symbol, exchange }) });
     // A change saved while this was loading may be missing from it: keep it marked stale.
-    prepCache[key] = { data: r.result, stale: job.again };
-    if (job.again) { loadingPrep.delete(key); return await loadPrep(symbol, exchange, key, true); }
+    cache[key] = { data: r.result, stale: job.again };
+    if (job.again) { loading.delete(jobKey); return await loadCached(cache, symbol, exchange, key, true); }
     // Do not redraw under someone typing; say that newer data is waiting instead.
     if (hadData && document.activeElement?.closest('main form, main .verify')) {
       for (const m of document.querySelectorAll('.prep-newer')) m.hidden = false;
@@ -665,12 +675,82 @@ async function loadPrep(symbol, exchange, key, hadData) {
   } catch (err) {
     toast(err.message, true);
   } finally {
-    loadingPrep.delete(key);
+    loading.delete(jobKey);
   }
 }
 
 /** Shown when a fresher copy arrived while you were typing, so stale statuses never pass silently. */
 const newerMarker = () => '<p class="prep-newer" role="status" hidden><button type="button" class="btn" data-action="prep-redraw">Newer data available — refresh</button> <span class="small muted">Statuses below may be out of date. Refreshing keeps what you saved, not what you are typing.</span></p>';
+
+// ---------- Snapshot: pasted sections, corrected by saving again, never verified ----------
+
+const SNAP_ORDER = ['overview', 'swot', 'results', 'shareholding', 'peers'];
+const SNAP_PRICE = new Set(['overview', 'peers']); // price-type: kept per exchange, stale after a week
+const SNAP_FOLDED = new Set(['results', 'shareholding', 'peers']);
+const snapDrafts = {}; // `${symbol}|${section}` → { text, exchange, asOf, source, open, preview }
+const sectionLabel = (section) => S.meta.sections?.[section] ?? section;
+/** “2026-10-25” → “25 Oct” (with the year when it is not this year). */
+function shortDate(date) {
+  const ms = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(ms)) return String(date ?? '');
+  const sameYear = String(date).slice(0, 4) === String(S.status.today).slice(0, 4);
+  return new Date(ms).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }), timeZone: 'UTC' });
+}
+const ageDays = (date) => Math.max(0, Math.round((Date.parse(`${S.status.today}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000) || 0);
+const writtenBy = (by) => (by === 'owner' ? 'Written by you' : `<span class="tag tag-warn">Written by a model</span> ${esc(actorName(by))}`);
+
+/** Who wrote it, the as-of date and its age, and a gentle hint when it is old. */
+function snapMeta(rec, section) {
+  const age = ageDays(rec.asOf);
+  const old = SNAP_PRICE.has(section) ? (age > 7 ? 'Older than a week' : '') : (age > 100 ? 'Older than 100 days' : '');
+  return `<p class="small muted snap-meta">${writtenBy(rec.by)}${rec.exchange ? ` · ${esc(rec.exchange)} prices` : ''} · as of ${esc(shortDate(rec.asOf))}, ${age} day${age === 1 ? '' : 's'} ago${old ? ` <span class="tag tag-warn">${old}</span>` : ''} · saved ${when(rec.at)}</p>`;
+}
+
+function pasteBox(symbol, exchange, section) {
+  const key = `${symbol}|${section}`;
+  const d = snapDrafts[key] ?? {};
+  const today = S.status.today;
+  return `<details class="snap-paste" data-draft="${esc(key)}" ${d.open ? 'open' : ''}><summary class="btn">Paste or update</summary>
+    <form class="form" data-form="section-paste" data-section="${esc(section)}" data-symbol="${esc(symbol)}">
+      <p class="small muted">Copy the ${esc(sectionLabel(section))} from the website and paste it as it comes. Preview shows what the desk read; nothing is saved until you click Save. Saving again later replaces it; earlier versions stay in history.</p>
+      ${field('Text to paste', `<textarea name="text" rows="8" required spellcheck="false">${esc(d.text ?? '')}</textarea>`)}
+      <div class="grid">
+        ${SNAP_PRICE.has(section) ? field('Exchange', exchangeSelect(d.exchange ?? exchange)) : ''}
+        ${field('As of (India date)', `<input name="asOf" type="date" max="${today}" value="${esc(d.asOf ?? today)}">`)}
+        ${field('Link (optional)', `<input name="source" type="url" value="${esc(d.source ?? '')}">`)}
+      </div>
+      <div class="actions"><button class="btn" name="intent" value="preview">Preview</button><button class="btn primary" name="intent" value="save">Save</button></div>
+      ${d.preview ? `<div class="snap-preview" role="status"><h4>Preview · not saved yet</h4>${warningsHtml(d.preview.warnings)}${sectionBody(section, d.preview.data, d.preview.derived, { symbol })}</div>` : ''}
+    </form></details>`;
+}
+
+function snapSection(symbol, exchange, section, s) {
+  const label = sectionLabel(section);
+  const cur = s?.current;
+  const history = s?.history ?? [];
+  const ctx = { symbol };
+  const exTag = SNAP_PRICE.has(section) ? ` <span class="tag tag-muted">${esc(exchange)}</span>` : '';
+  const body = cur
+    ? `<div class="snap-current">${snapMeta(cur, section)}${sectionBody(section, cur.data, s.derived, ctx)}${sourcesList(cur.sources)}</div>`
+    : `<p class="small muted">Nothing saved yet${SNAP_PRICE.has(section) ? ` for ${esc(exchange)}` : ''}. Use Paste or update.</p>`;
+  const modify = cur ? `<button type="button" class="btn" data-action="section-modify" data-id="${esc(cur.id)}" data-draft="${esc(`${symbol}|${section}`)}" data-asof="${esc(cur.asOf)}"${SNAP_PRICE.has(section) ? ` data-exchange="${esc(cur.exchange ?? exchange)}"` : ''}>Modify</button>` : '';
+  const older = history.length ? `<details class="snap-history"><summary>Earlier versions (${history.length})</summary>
+    <p class="small muted">Kept as they were saved. Worked-out figures are shown for the current version only.</p>
+    ${history.map((h) => `<div class="snap-old">${snapMeta(h, section)}${sectionBody(section, h.data, null, ctx)}</div>`).join('')}</details>` : '';
+  return `<section class="card snap-sec" data-section="${esc(section)}" data-fold="snap-${esc(section)}" data-info="snap-${esc(section)}"${SNAP_FOLDED.has(section) ? ' data-start-folded' : ''}>
+    <div class="card-head"><h3>${esc(label)}${exTag}</h3>${cur ? trashBtn('note', cur.id, `${label} for ${symbol}`) : ''}</div>
+    ${body}<div class="actions snap-tools">${pasteBox(symbol, exchange, section)}${modify}</div>${older}</section>`;
+}
+
+/** The stock's pasted sections for one exchange (Overview and Peers are per exchange). */
+function snapshotCard(symbol, exchange) {
+  const d = snapData(symbol, exchange);
+  const head = `<h2>Snapshot · ${esc(symbol)}</h2>`;
+  if (!d) return `<section class="card snapshot" data-fold="snapshot">${head}<p class="muted">Loading…</p></section>`;
+  return `<section class="card snapshot" data-fold="snapshot" data-info="snapshot">${head}
+    <p class="small muted">Facts copied from other sites, pasted by you or saved by a model, shown as tables and lists, with a few figures the desk works out from the numbers. Notes are never verified and never count for a check or an approval. To correct one, save it again: earlier versions stay in history.</p>
+    <div class="snap-list">${SNAP_ORDER.map((section) => snapSection(symbol, exchange, section, d.sections?.[section])).join('')}</div></section>`;
+}
 
 /** Buttons, records and a small form under one research item on the Prepare page. */
 function prepExtra(c, strategyId, symbol, exchange, list) {
@@ -717,7 +797,7 @@ function prepareBody(symbol, exchange, d) {
       ${fit?.missing.length ? `<p class="small">Still to do: ${fit.missing.map(esc).join('; ')}.</p>` : ''}
       <details class="cl-later"><summary>Its research items (${items.length})</summary>${checklistHtml(items, { checklist: cl, esc, tag, extra: (c) => prepExtra(c, r.strategyId, symbol, exchange, d.records) })}</details></section>`;
   }).join('');
-  return `${newerMarker()}${master}${strategies || '<p class="muted">No strategy is switched on.</p>'}${recCards(symbol, exchange, d)}
+  return `${newerMarker()}${snapshotCard(symbol, exchange)}${master}${strategies || '<p class="muted">No strategy is switched on.</p>'}${recCards(symbol, exchange, d)}
     ${tvChart(symbol, exchange)}
     <section class="card"><h2>Let Claude do the research</h2><p class="small">Ask Claude Code:</p>
       <pre class="code wrap">Use swing-desk. For ${esc(symbol)} on ${esc(exchange)}, call list_evidence and use the records that are still verified. For each research item still missing, research it with free sources and save it with add_evidence (exchange ${esc(exchange)} for prices and charts, whole-market checks under MARKET), with links. Then call get_recommendation and save your own view with add_recommendation. Tell me what I still need to check and verify myself.</pre></section>`;
@@ -914,6 +994,12 @@ function lotsTable(lots, closed = false) {
 }
 
 function noteHtml(n) {
+  // A pasted section has no body: one line that opens the Snapshot where its table is.
+  if (n.section) {
+    const href = `#/prepare/${encodeURIComponent(n.symbol)}/${n.exchange === 'BSE' ? 'BSE' : 'NSE'}`;
+    return `<article class="note snap-note"><p><a href="${esc(href)}">${esc(sectionLabel(n.section))}${n.exchange ? ` · ${esc(n.exchange)}` : ''} · as of ${esc(shortDate(n.asOf))}</a>
+      <span class="small muted">${n.by === 'owner' ? 'Written by you' : 'Written by a model'}${n.revisedBy ? ' · an earlier version' : ''} · opens the Snapshot</span></p></article>`;
+  }
   return `<article class="note"><div class="card-head"><h3>${n.symbol ? `${symLink(n.symbol)} · ` : ''}${esc(n.title)}</h3>${trashBtn('note', n.id, `note “${n.title}”`)}</div><p class="small muted">${byLine(n.by)} · ${when(n.at)}</p><p class="pre">${esc(n.body)}</p>${sourcesList(n.sources)}</article>`;
 }
 
@@ -1073,6 +1159,7 @@ function describe(e) {
     'agent.updated': () => `Updated agent ${S.agents.find((a) => a.id === d.id)?.name ?? d.id}${d.scope ? ` → ${d.scope}` : ''}${d.revoked ? ' (revoked)' : ''}`,
     'evidence.added': () => `Record for ${d.symbol}: ${d.kind}${d.exchange ? ` (${d.exchange})` : ''}${d.price ? ` ${price(d.price)}` : ''}`,
     'note.added': () => `Note: ${d.title}`,
+    'note.structured': () => `${d.title ?? 'Section'} for ${d.symbol}${d.exchange ? ` on ${d.exchange}` : ''}, as of ${d.asOf}${d.revises ? ' (new version; the earlier one stays in history)' : ''}`,
     'intent.submitted': () => `Request: ${d.kind} ${d.symbol}`,
     'intent.approved': () => `Approved request ${d.id}`,
     'intent.rejected': () => `Rejected request ${d.id}`,
@@ -1211,6 +1298,20 @@ const forms = {
     await act('note.add', { symbol: form.dataset.symbol, title: data.title, body: data.body });
     toast('Note saved.');
   },
+  async 'section-paste'(form, data, submitter) {
+    const { symbol, section } = form.dataset;
+    const key = `${symbol}|${section}`;
+    const d = (snapDrafts[key] ??= {});
+    Object.assign(d, { text: data.text, exchange: data.exchange, asOf: data.asOf, source: data.source, open: true });
+    if (submitter?.value === 'preview') {
+      d.preview = (await api('/api/action/note.preview', { method: 'POST', body: JSON.stringify({ section, text: data.text, symbol }) })).result;
+      return;
+    }
+    const r = await act('note.section.add', { symbol, section, text: data.text, ...(SNAP_PRICE.has(section) ? { exchange: data.exchange } : {}), asOf: data.asOf || undefined, sources: data.source ? [data.source] : [] });
+    delete snapDrafts[key];
+    const skipped = r.warnings?.length ?? 0;
+    toast(`Saved. Earlier versions stay in history.${skipped ? ` ${skipped} line(s) could not be read; use Preview to see which.` : ''}`);
+  },
   async 'stock-pick'(form, data) {
     location.hash = `#/stock/${encodeURIComponent(data.symbol.trim().toUpperCase())}`;
   },
@@ -1273,6 +1374,12 @@ document.addEventListener('click', async (e) => {
       toast(`Verified. It counts until ${r.goodUntil} (India date).`);
     }
     if (action === 'prep-redraw') { /* the render below draws the newer copy */ }
+    if (action === 'section-modify') {
+      // Start from the saved text, written out the way the desk reads it.
+      el.disabled = true;
+      const r = await api('/api/action/note.section.text', { method: 'POST', body: JSON.stringify({ id: el.dataset.id }) });
+      snapDrafts[el.dataset.draft] = { text: r.result.text, exchange: el.dataset.exchange, asOf: el.dataset.asof, open: true, preview: null };
+    }
     if (action === 'prepare-mark') {
       const d = el.dataset;
       await act('prepare.mark', { symbol: d.symbol, strategyId: d.strategy || undefined, itemId: d.itemid, exchange: d.exchange, evidenceId: d.evidence || undefined, yes: d.yes === '1' });
@@ -1301,6 +1408,7 @@ document.addEventListener('click', async (e) => {
       drafts.strategy = { key: form.dataset.key, value: s };
     }
     render();
+    if (action === 'section-modify') main.querySelector(`details[data-draft="${CSS.escape(el.dataset.draft)}"] textarea`)?.focus();
     if (action === 'page' || action === 'ledger-more') {
       const nav = main.querySelector(`.pager[data-key="${CSS.escape(el.dataset.key ?? 'ledger')}"]`);
       (nav?.querySelector(`button:not(:disabled)`) ?? main).focus();
@@ -1405,6 +1513,17 @@ document.addEventListener('input', (e) => {
   }
   if (form?.dataset.form === 'agent-add' && ['intentsPerDay', 'writesPerDay', 'callsPerHour'].includes(e.target.name)) setValue(form, 'agentPreset', 'custom');
 });
+// Paste boxes keep what you typed, and whether they are open, across redraws.
+const snapDraftOf = (el) => { const key = el.closest?.('details.snap-paste')?.dataset.draft; return key ? (snapDrafts[key] ??= {}) : null; };
+document.addEventListener('input', (e) => {
+  const d = e.target.form?.dataset.form === 'section-paste' && e.target.name ? snapDraftOf(e.target) : null;
+  if (d) d[e.target.name] = e.target.value;
+});
+document.addEventListener('toggle', (e) => {
+  if (!e.target.matches?.('details.snap-paste')) return;
+  const d = snapDraftOf(e.target);
+  if (d) d.open = e.target.open;
+}, true);
 document.addEventListener('input', (e) => {
   const box = e.target.closest('[data-funding]');
   if (box && e.target.name === 'fundingValue') {
@@ -1420,7 +1539,7 @@ function syncFunding(form) {
 // ---------- update check ----------
 
 /** Must match API_VERSION in src/version.js. Bump both when the page needs new server data. */
-const CLIENT_API = 4;
+const CLIENT_API = 5;
 const serverIsOld = () => (S?.meta?.api ?? 1) < CLIENT_API;
 
 /** The server keeps its code in memory; after an update it must be restarted. */

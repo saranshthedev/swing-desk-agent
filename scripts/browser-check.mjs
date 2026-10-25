@@ -67,8 +67,27 @@ const errors = [];
     }
     owner(C.markPrepared, { symbol: 'SAMPLE', strategyId: 'breakout', itemId: item.id, exchange: 'NSE', evidenceId, yes: true });
   }
+  // A model wrote a SWOT for MODELCO with HTML in its points: it must show as plain text.
+  seed.run('agent:seed-model', (s, ctx) => C.addSection(s, { symbol: 'MODELCO', section: 'swot', text: 'Strengths :\n- Strong <img src=x onerror=1> brand\n--Weakness :\n- Debt <b>rising</b>' }, ctx));
   seed.close();
 }
+
+// Pasted sections, verbatim from the design spec.
+const OVERVIEW_PASTE = ['Open\t692.55', 'Previous Close\t694.05', 'Volume\t1,89,89,022', 'Value (Lacs)\t1,31,555.94', 'VWAP\t692.13', 'Beta\t', '1.22',
+  'Mkt Cap (Rs. Cr.)\t10,68,200', 'High\t696.80', 'Low\t686.85', 'UC Limit\t711.65', 'LC Limit\t670.25', '52 Week High\t1,017.50', '52 Week Low\t681.90',
+  'Face Value\t1', 'All Time High\t1,020.50', 'All Time Low\t7.85', '20D Avg Volume\t3,14,62,518', '20D Avg Delivery(%)\t59.64', 'Book Value Per Share\t390.37',
+  'Dividend Yield\t2.24', 'TTM EPS', 'See historical trend ', '51.95', '(+10.51% YoY)', 'TTM PE', 'See historical trend ', '13.34', '(Low PE)',
+  'P/B', 'See historical trend ', '1.78', '(Low P/B)', 'Sector PE\t18.08'].join('\n');
+const SWOT_PASTE = ['Strengths :', 'Growth in Net Profit with increasing Profit Margin (QoQ)', 'Increasing Revenue every Quarter for the past 4 Quarters',
+  'Annual EPS Improving for last 2 years', 'Company with Zero Promoter Pledge', '--Weakness :', 'FII/FPI decreased their shareholding last quarter',
+  'Near 52 Week Low', 'Inefficient use of shareholder funds - ROE declining', 'Inefficient use of capital to generate profits - RoCE declining'].join('\n');
+// Synthetic wide tables (newest period last), so the 390 px screenshots show them scrolling inside their card.
+const RESULTS_PASTE = ['\tJun 2025\tSep 2025\tDec 2025\tMar 2026\tJun 2026\tSep 2026', 'Revenue\t1,000\t1,050\t1,100\t1,180\t1,240\t1,300',
+  'Net Profit\t100\t96\t110\t118\t121\t130', 'Operating Margin %\t18.2\t18.0\t18.6\t19.1\t19.0\t19.4'].join('\n');
+const SHAREHOLDING_PASTE = ['\tDec 2025\tMar 2026\tJun 2026\tSep 2026', 'Promoters\t50.10\t50.10\t50.10\t50.10', 'FII/FPI\t20.40\t20.10\t19.80\t18.10',
+  'DII\t15.00\t15.20\t15.90\t17.30', 'Public\t14.50\t14.60\t14.20\t14.50', 'Pledge\t0\t0\t0\t0'].join('\n');
+const PEERS_PASTE = ['\tPrice ₹\tMkt Cap ₹ Cr\tPE\tP/B\tROE %\tDividend yield %', 'SAMPLE\t692.13\t10,68,200\t13.34\t1.78\t13.6\t2.24',
+  'Peer One\t1,450.00\t5,20,000\t24.1\t3.9\t16.2\t1.1', 'Peer Two\t310.50\t1,10,000\t18.0\t2.2\t12.4\t1.8', 'Peer Three\t95.20\t45,000\t11.2\t1.1\t9.8\t3.0'].join('\n');
 
 try {
   server = spawn(process.execPath, [join(root, 'bin/desk.js'), 'start'], { env, stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true });
@@ -253,6 +272,75 @@ try {
   await click('[data-action=prep-redraw]');
   await until(() => js('document.querySelector(".prep-newer")?.hidden === true'), 'redrawn with the newer copy');
 
+  // Snapshot: pasted sections shown as tables and lists. Notes are corrected, never verified.
+  const sec = (s) => `.snapshot .snap-sec[data-section="${s}"]`;
+  const secText = (s, part = '') => js(`document.querySelector(${JSON.stringify(`${sec(s)} ${part}`.trim())})?.textContent ?? ''`);
+  const paste = async (section, text, button) => {
+    await clearToast();
+    await js(`(() => {
+      const f = document.querySelector(${JSON.stringify(`${sec(section)} form[data-form=section-paste]`)});
+      if (!f) throw new Error('paste box for ${section} not found');
+      for (let d = f.closest('details'); d; d = d.parentElement.closest('details')) d.open = true;
+      ${text === null ? '' : `f.elements.text.value = ${JSON.stringify(text)}; f.elements.text.dispatchEvent(new Event('input', { bubbles: true }));`}
+      f.requestSubmit(f.querySelector('button[value=${button}]'));
+    })()`);
+  };
+  await until(() => js('document.querySelectorAll(".snapshot .snap-sec").length === 5'), 'Snapshot with five sections');
+  assert.deepEqual(await js('[...document.querySelectorAll(".snapshot .snap-sec")].map((c) => c.dataset.section)'), ['overview', 'swot', 'results', 'shareholding', 'peers']);
+  assert.equal(await js(`document.querySelector(${JSON.stringify(`${sec('overview')} form[data-form=section-paste]`)}).elements.exchange.value`), 'NSE');
+  await paste('overview', OVERVIEW_PASTE, 'preview');
+  const preview = await until(async () => { const t = await secText('overview', '.snap-preview'); return t.includes('Worked out by the desk') && t; }, 'Overview preview');
+  assert.match(preview, /1\.5% above the 52-week low · near the low/);
+  assert.match(preview, /PE is 26% below the sector’s/);
+  assert.equal(await secText('overview', '.snap-current'), '', 'a preview saves nothing');
+  await paste('overview', null, 'save');
+  assert.match(await toast(), /Saved\. Earlier versions stay in history\./);
+  const overview = await until(async () => { const t = await secText('overview', '.snap-current'); return t.includes('692.13') && t; }, 'saved Overview');
+  assert.match(overview, /Reference price.*VWAP.*692\.13/);
+  assert.match(overview, /as of \d{1,2} [A-Z][a-z]{2}, 0 days ago/);
+  assert.match(overview, /Written by you/);
+  assert.match(overview, /NSE/);
+  await paste('swot', SWOT_PASTE, 'save');
+  assert.match(await toast(), /Saved/);
+  await until(() => js(`document.querySelectorAll(${JSON.stringify(`${sec('swot')} .snap-current [data-list=strengths] li`)}).length === 4`), 'four strengths');
+  assert.equal(await js(`document.querySelectorAll(${JSON.stringify(`${sec('swot')} .snap-current [data-list=weaknesses] li`)}).length`), 4);
+  // Modify starts from the saved text; saving it makes a new version and keeps the old one.
+  await click(`${sec('swot')} [data-action=section-modify]`);
+  const canonical = await until(() => js(`document.querySelector(${JSON.stringify(`${sec('swot')} form[data-form=section-paste] textarea`)})?.value`), 'Modify text');
+  assert.match(canonical, /^Strengths :\n- Growth in Net Profit/);
+  assert.match(canonical, /- Near 52 Week Low/);
+  await paste('swot', canonical.replace('Near 52 Week Low', 'Close to the 52 Week Low'), 'save');
+  assert.match(await toast(), /Saved\. Earlier versions stay in history\./);
+  await until(async () => (await secText('swot')).includes('Earlier versions (1)') && (await secText('swot', '.snap-current')).includes('Close to the 52 Week Low'), 'new SWOT version with history');
+  // Wide tables: quarterly results, shareholding and peers.
+  for (const [section, text] of [['results', RESULTS_PASTE], ['shareholding', SHAREHOLDING_PASTE], ['peers', PEERS_PASTE]]) {
+    await paste(section, text, 'save');
+    assert.match(await toast(), /Saved/);
+    await until(async () => (await secText(section, '.snap-current')).includes('Worked out by the desk'), `saved ${section}`);
+  }
+  assert.match(await secText('results', '.snap-current'), /Revenue rose in each of the last 5 quarters/);
+  assert.match(await secText('shareholding', '.snap-current'), /FII\/FPI holding fell 1\.7 points/);
+  assert.match(await secText('peers', '.snap-current'), /median/i);
+  // Open the folded sections for the screenshots.
+  await js('document.querySelectorAll(".snapshot .snap-sec.folded .fold").forEach((b) => b.click())');
+  const snapshotAll = await js('document.querySelector(".snapshot").innerText');
+  assert.doesNotMatch(snapshotAll, /you should|undefined|NaN/i);
+  assert.equal(await js('document.querySelectorAll(".snapshot [data-action=verify-evidence], .snapshot .verify").length'), 0, 'no verify control in the Snapshot');
+  assert.equal(await js('[...document.querySelectorAll(".snapshot button, .snapshot summary")].some((b) => /verif|confirm/i.test(b.textContent))'), false, 'no verify or confirm button in the Snapshot');
+  await shot('prepare-snapshot');
+  await shot('prepare-snapshot', 390);
+  // A model's section: HTML stays visible text, no image is created, and it says who wrote it.
+  await go('#/prepare/MODELCO/NSE');
+  await until(async () => (await secText('swot', '.snap-current')).includes('<img src=x onerror=1>'), 'model SWOT as text');
+  assert.equal(await js('document.querySelectorAll("main img").length'), 0, 'agent text creates no image');
+  assert.match(await secText('swot', '.snap-current'), /Written by a model/);
+  assert.match(await secText('swot', '.snap-current'), /<b>rising<\/b>/);
+  await go('#/stock/MODELCO');
+  await until(async () => (await secText('swot', '.snap-current')).includes('<img src=x onerror=1>'), 'model SWOT on the stock page');
+  assert.equal(await js('document.querySelectorAll("main img").length'), 0);
+  assert.doesNotMatch(await text(), /undefined/);
+  await go('#/prepare/SAMPLE/NSE');
+
   // Owner reviews the agent's request in the browser.
   await go(`#/request/${proposed.id}`);
   await waitText('The plan, recalculated by the desk');
@@ -329,6 +417,10 @@ try {
   await submit('note', { title: 'Watch 580', body: 'Weekly supply zone' });
   assert.match(await toast(), /Note saved/);
   await waitText('Watch 580');
+  // The stock page shows the same Snapshot; plain note lists never show a blank or "undefined" note.
+  await until(async () => (await secText('overview', '.snap-current')).includes('692.13'), 'Snapshot on the stock page');
+  assert.doesNotMatch(await text(), /undefined/);
+  await js('document.querySelectorAll(".snapshot .snap-sec.folded .fold").forEach((b) => b.click())');
   await shot('stock');
   await shot('stock', 390);
   await go('#/stocks');

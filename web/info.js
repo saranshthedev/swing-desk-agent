@@ -41,6 +41,14 @@ export const INFO = {
   correct: 'Correct a wrong record. The old one stays in the history, marked corrected, and stops counting. Research you prepared with it must be prepared again, and its wait starts again.',
   flag: 'Claude thinks this record may be wrong or out of date. A flag changes nothing by itself. Look at it, and correct the record if it is really wrong.',
 
+  // ---------- Snapshot (pasted sections) ----------
+  snapshot: 'Facts copied from other sites, shown as tables and lists. The desk reads the text with fixed rules (no AI, nothing fetched from the internet) and works out a few figures from the numbers. Notes are never verified and never count for a checklist item or an approval. To correct one, paste or modify it and save again: the new version replaces it and earlier versions stay in history.',
+  'snap-overview': 'Today’s price box from a quote page: one label and value per line, or the value on the next line. Example: “52 Week Low (tab) 681.90” or “TTM PE”, then “13.34”, then “(Low PE)”. Kept per exchange, because NSE and BSE prices differ a little. The desk takes the last price, else VWAP, else the previous close. Example: ₹692.13 is 1.5% above a ₹681.90 52-week low, so “near the low” (within 10%).',
+  'snap-swot': 'Strengths, weaknesses, opportunities and threats. Put each heading on its own line, then one point per line. Example: “Strengths :”, then “Company with Zero Promoter Pledge”, then “--Weakness :”, then “Near 52 Week Low”.',
+  'snap-results': 'The quarterly results table, copied as it comes (columns separated by tabs). First line: the quarters, e.g. “Jun 2026 (tab) Sep 2026”. Then one row per line, e.g. “Revenue (tab) 1,240 (tab) 1,300”. The desk works out the change on the quarter before and on a year earlier. Example: revenue ₹1,240 crore to ₹1,300 crore is up 4.8%.',
+  'snap-shareholding': 'Who owns the shares, in %, by quarter: Promoters, FII/FPI, DII, Public, Pledge. First line: the quarters. The desk shows the change from the quarter before in percentage points. Example: FII/FPI 19.8% to 18.1% fell 1.7 points.',
+  'snap-peers': 'Similar companies, one per row, with numbers such as PE or ROE in columns. Include this stock’s own row. Kept per exchange. The desk works out the median of the other companies and how far this stock is from it. Example: PE 13.3 against a peer median of 18 is 26% below.',
+
   // ---------- agents ----------
   name: 'A name you will recognise, for example “Claude research”.',
   client: 'Which app this key is for, for example Claude Code or Claude Desktop. Just a note for you.',
@@ -121,6 +129,12 @@ export const INFO_IN = {
     marginPct: 'The right own-cash % for MTF from Kite. Example: 40 means you pay 40% and borrow 60%.',
     exchange: 'The exchange the corrected price or chart is from.',
     goodUntil: 'The last India date the corrected record stays true. Empty: the desk picks by kind.',
+  },
+  'section-paste': {
+    text: 'Copy the section from the website and paste it here as it comes. Preview shows what the desk read and lists any line it could not read. Nothing is saved until you click Save. No PIN is needed.',
+    exchange: 'The exchange the prices are from. NSE and BSE prices can differ a little, so each keeps its own Overview and Peers.',
+    asOf: 'The India date the numbers are from, usually today. It cannot be in the future. Example: results published on 20 Oct are as of 20 Oct.',
+    source: 'Where you copied it from, so you can check it again later. Example: the stock’s page on a free results site.',
   },
   'stock-pick': { symbol: 'The stock’s name as in Kite, for example TATAMOTORS. Type MARKET for whole-market checks.' },
   note: { title: 'A short heading, for example “Watch the 580 level”.', body: 'Anything you want to remember about this stock. Connected agents with Read access can see notes.' },

@@ -87,6 +87,23 @@ Change it with `SWING_DESK_DATA`, the port with `SWING_DESK_PORT`, backups with 
 6. You place the order in Kite using the ticket, then record the actual fill. Sales are recorded
    the same way, with actual contract-note charges when you have them.
 
+## Snapshot: pasted notes as tables
+
+At the top of Prepare and on each stock page, a **Snapshot** keeps five sections you paste from
+free sites: **Overview** (the day’s price box), **SWOT**, **Quarterly results**, **Shareholding
+pattern** and **Peers**. Click **Paste or update**, paste the text as it comes, click **Preview**
+to see what the desk read (and any line it could not read), then **Save**. No PIN is needed.
+Claude can save the same sections with `add_structured_note`; they show “Written by a model”.
+
+- The desk reads the text with fixed rules (no AI, nothing fetched) and works out a few figures:
+  for example “1.5% above the 52-week low · near the low” (within 10%), “PE is 26% below the
+  sector’s”, “Revenue rose in each of the last 4 quarters”, “FII/FPI holding fell 1.7 points”, and
+  each peer number against the median of the other companies.
+- Overview and Peers are kept per exchange (NSE or BSE). Each section shows its as-of date and age.
+- Notes are **never verified** and never count for a checklist item or an approval. A wrong one
+  is **corrected** by saving it again (**Modify** starts from the saved text): the new version
+  becomes current and earlier versions stay under **Earlier versions** and in the ledger.
+
 ## Limits
 
 - Charges are estimates from Zerodha’s published rates checked on 2026-10-22/23. Re-check

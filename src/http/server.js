@@ -23,7 +23,7 @@ import { RISK_PRESETS, AGENT_PRESETS, PLAYBOOK_TEMPLATES, PLAN_DEFAULTS, matchRi
 import { newId } from '../store/store.js';
 import { backupDir } from '../config.js';
 import { API_VERSION, codeChangedSinceStart } from '../version.js';
-import { SECTIONS, EXCHANGE_SECTIONS, parseSection, deriveSection, currentSection } from '../core/sections.js';
+import { SECTIONS, EXCHANGE_SECTIONS, parseSection, formatSection, deriveSection, currentSection } from '../core/sections.js';
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), '../../web');
 const BIN = resolve(dirname(fileURLToPath(import.meta.url)), '../../bin/desk.js');
@@ -78,6 +78,12 @@ const ACTIONS = {
     return { data, warnings, derived: deriveSection(body.section, data, { symbol: String(body.symbol ?? '').trim().toUpperCase() }) };
   }],
   'note.section.add': [false, owner(C.addSection)],
+  // Canonical paste text of a saved section, so Modify starts from what is saved. Reads only.
+  'note.section.text': [false, (store, body) => store.read((s) => {
+    const n = s.notes.find((x) => x.id === body.id && x.section);
+    if (!n || !live(n) || n.purged) throw new UserError('That section was not found. It may be in the Trash or deleted.');
+    return { text: formatSection(n.section, n.data) };
+  })],
   'stock.snapshot': [false, (store, body) => store.read((s) => {
     const symbol = String(body.symbol ?? '').trim().toUpperCase();
     const exchange = body.exchange ?? 'NSE';

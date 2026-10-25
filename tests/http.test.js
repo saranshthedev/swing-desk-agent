@@ -172,10 +172,30 @@ test('structured note actions obey Origin and CSRF checks', async () => {
   const t = await serve();
   try {
     const body = { symbol: 'ABC', section: 'swot', text: SWOT_TEXT };
-    for (const name of ['note.preview', 'note.section.add', 'stock.snapshot']) {
+    for (const name of ['note.preview', 'note.section.add', 'stock.snapshot', 'note.section.text']) {
       assert.equal((await t.post(name, body, { Origin: 'https://evil.example' })).status, 403, name);
       assert.equal((await t.post(name, body, { 'X-CSRF': 'wrong' })).status, 403, name);
     }
     assert.equal(t.d.store.read((s) => s.notes.length), 0);
+  } finally { t.server.close(); }
+});
+
+test('note.section.text gives the canonical text of a saved section, never of a trashed or plain note', async () => {
+  const t = await serve();
+  try {
+    const add = await (await t.post('note.section.add', { symbol: 'ABC', section: 'swot', text: SWOT_TEXT })).json();
+    const before = t.d.store.read((s) => s.seq);
+    const r = await (await t.post('note.section.text', { id: add.result.id })).json();
+    assert.equal(r.result.text, 'Strengths :\n- Good growth\nWeaknesses :\n- Near 52 Week Low\nOpportunities :\nThreats :');
+    assert.equal(t.d.store.read((s) => s.seq), before, 'reading the text writes nothing');
+    const plain = t.d.owner(C.addNote, { symbol: 'ABC', title: 'x', body: 'y' }).id;
+    assert.equal((await t.post('note.section.text', { id: plain })).status, 400);
+    assert.equal((await t.post('note.section.text', { id: 'note_missing' })).status, 400);
+    t.d.owner(C.moveToTrash, { kind: 'note', id: add.result.id });
+    const gone = await t.post('note.section.text', { id: add.result.id });
+    assert.equal(gone.status, 400);
+    assert.match((await gone.json()).error, /not found/);
+    t.d.owner(C.purgeFromTrash, { kind: 'note', id: add.result.id });
+    assert.equal((await t.post('note.section.text', { id: add.result.id })).status, 400);
   } finally { t.server.close(); }
 });

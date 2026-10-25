@@ -192,6 +192,34 @@ Nothing can be approved until its research has been prepared **and has waited**.
 
 The TradingView chart on Prepare shows BSE prices only; nothing on it counts for NSE.
 
+**Snapshot (optional notes as tables).** The first card on Prepare (and on the stock page) is the
+**Snapshot**: Overview, SWOT, Quarterly results, Shareholding pattern and Peers. To fill one:
+
+1. Copy the section from a free website (select the box or table, Ctrl + C).
+2. Click **Paste or update** under that section, paste it into the box (Ctrl + V).
+3. Overview and Peers: check the **Exchange** (NSE or BSE). Check **As of** (the date the numbers
+   are from; today by default). Add the link if you like.
+4. Click **Preview**. The desk shows the table it read, its worked-out figures and one line for
+   each line it could not read. Then click **Save**. No PIN is needed.
+
+Paste formats the desk reads:
+
+- **Overview**: one label and value per line, separated by a tab, a colon or two spaces, or the
+  value on the next line. Example: `52 Week Low` then a tab then `681.90`; or `TTM PE`, then
+  `13.34`, then `(Low PE)` (the remark in brackets is kept).
+- **SWOT**: a heading line (`Strengths :`, `--Weakness :`, `Opportunities`, `Threats`), then one
+  point per line.
+- **Quarterly results, Shareholding pattern, Peers**: a table. The first line holds the column
+  names (quarters such as `Jun 2026`, or for Peers numbers such as `PE`); then one row per line.
+  Columns are separated by tabs (as they come when you copy a table) or by two or more spaces.
+  For Peers, include the stock’s own row so the desk can compare it with the median of the others.
+
+Notes are never verified and never count for any check or approval. If one is wrong, click
+**Modify** (it starts from the saved text) or paste again and save: the new version replaces it,
+and the old one stays under **Earlier versions** and in the ledger. Overview and Peers show
+“Older than a week” and the other sections “Older than 100 days” when it may be time to paste a
+fresh copy.
+
 ### Step 11. Ask Claude to research
 
 In Claude Code, ask in plain words. Examples:
