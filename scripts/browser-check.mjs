@@ -438,6 +438,16 @@ try {
   await js('document.querySelectorAll(".snapshot .snap-sec.folded .fold").forEach((b) => b.click())');
   await shot('stock');
   await shot('stock', 390);
+  // Export gives exactly what is on the page as Markdown, without buttons, forms or the PIN.
+  assert.ok(await js('!!document.querySelector(".page-head [data-export=file]") && !!document.querySelector(".page-head [data-export=copy]")'), 'Export buttons on the stock page');
+  const exported = await js('import("/export-md.js").then((m) => m.pageToMarkdown(document.querySelector("main")))');
+  if (shots) writeFileSync(join(shots, 'stock-export.md'), exported);
+  assert.match(exported, /^\*Exported from Swing Desk\*\n\n# SAMPLE/, 'export starts the page with its title');
+  assert.match(exported, /Weekly supply zone/, 'export has the note');
+  assert.match(exported, /692\.13/, 'export has the Snapshot figures');
+  assert.match(exported, /^\| .+ \|$/m, 'export keeps tables');
+  assert.doesNotMatch(exported, /Export as Markdown|Save correction|Delete forever|All stocks|New plan|undefined/, 'export leaves out controls');
+  assert.ok(await js('!!document.querySelector("main .note .md")'), 'note text rendered as Markdown');
   await go('#/stocks');
   await waitText('1 open lot');
   await submit('stock-pick', { symbol: 'newco' });

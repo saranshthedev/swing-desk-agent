@@ -3,6 +3,8 @@
 import { INFO, INFO_IN } from './info.js';
 import { checklistHtml, libraryHtml, strategyItemsHtml, toStrategyItem, groupName } from './checklist-ui.js';
 import { sectionBody, warningsHtml } from './sections-ui.js';
+import { mdBlock, mdInline } from './markdown.js';
+import { pageToMarkdown } from './export-md.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const main = $('#main');
@@ -324,9 +326,9 @@ const pages = {
     const i = S.intents.find((x) => x.id === id);
     if (!i) return '<p>That request was not found.</p>';
     const title = i.kind === 'buy' ? `Buy ${i.symbol}` : i.kind === 'exit' ? `Sell ${i.symbol}` : 'Change risk settings';
-    const head = `<header class="page-head"><div><a href="#/requests">Back to requests</a><h1>${i.symbol ? esc(title).replace(esc(i.symbol), symLink(i.symbol)) : esc(title)} <span class="tag tag-muted">${esc(i.status)}</span></h1>
+    const head = `<header class="page-head"><div><a class="back" href="#/requests">Back to requests</a><h1>${i.symbol ? esc(title).replace(esc(i.symbol), symLink(i.symbol)) : esc(title)} <span class="tag tag-muted">${esc(i.status)}</span></h1>
       <p class="muted">From ${byLine(i.by)} · ${when(i.at)}${i.status === 'pending' ? ` · expires ${when(i.expiresAt)}` : ''}${i.strategyName ? ` · strategy: ${esc(i.strategyName)}` : ''}</p></div>${FINISHED.has(i.status) ? trashBtn('request', i.id, 'this request') : ''}</header>`;
-    const thesis = `<section class="card"><h2>Reason given</h2>${i.by === 'owner' ? '' : '<p class="small"><span class="tag tag-warn">Written by a model · not verified</span></p>'}<blockquote>${esc(i.thesis)}</blockquote>${evidenceFor(i)}</section>`;
+    const thesis = `<section class="card"><h2>Reason given</h2>${i.by === 'owner' ? '' : '<p class="small"><span class="tag tag-warn">Written by a model · not verified</span></p>'}<blockquote class="md">${mdBlock(i.thesis)}</blockquote>${evidenceFor(i)}</section>`;
     const chart = i.symbol ? tvChart(i.symbol, i.plan?.exchange) : '';
     if (i.status === 'pending') return head + pendingRequest(i) + thesis + chart;
     return head + decidedRequest(i) + thesis + chart;
@@ -396,7 +398,7 @@ const pages = {
     const ev = paged(`stock-evidence-${sym}`, evidence);
     const nt = paged(`stock-notes-${sym}`, notes, 5);
     const kinds = Object.entries(S.meta.evidenceKinds).filter(([k]) => !['quote', 'funding'].includes(k));
-    return `<header class="page-head"><div><a href="#/stocks">All stocks</a><h1>${esc(sym)}</h1>
+    return `<header class="page-head"><div><a class="back" href="#/stocks">All stocks</a><h1>${esc(sym)}</h1>
         <p class="muted">${market ? 'Whole-market records count for every stock.' : quote ? `Last broker price ${price(quote.price)}${quote.exchange ? ` on ${esc(quote.exchange)}` : ''} · ${byLine(quote.by)} · ${when(quote.observedAt)}` : 'No broker price saved yet.'}</p></div>
         ${market ? '' : `<div class="actions"><a class="btn" href="#/prepare/${esc(encodeURIComponent(sym))}/${exchange}">Prepare</a><a class="btn primary" href="#/plan/${esc(encodeURIComponent(sym))}">New plan</a></div>`}</header>
       ${newerMarker()}
@@ -480,7 +482,7 @@ const pages = {
       <p class="lead">A playbook is a repeating job. At its time the desk queues a task; the assigned model app picks it up with <code>next_task</code>, follows your instructions and reports back. The desk never needs its own model key. There is no holiday calendar: switch playbooks off on market holidays.</p>
       ${S.playbooks.length ? S.playbooks.map((pb) => `<section class="card" data-fold="${esc(pb.id)}"><div class="card-head"><h2>${esc(pb.name)} ${pb.enabled ? '<span class="tag tag-ok">On</span>' : '<span class="tag tag-muted">Off</span>'}</h2><div class="row-tools"><a href="#/playbooks/${esc(pb.id)}">Edit</a>${trashBtn('playbook', pb.id, `playbook ${pb.name}`)}</div></div>
         <p class="muted">${esc(scheduleText(pb.schedule))} · run by ${esc(S.agentNames[pb.agentId] ?? 'nobody')} · up to ${pb.maxIntents} request(s) per run</p><p class="pre small">${esc(pb.instructions)}</p></section>`).join('') : '<p class="muted">No playbooks yet.</p>'}
-      <section class="card"><h2>Recent tasks</h2>${S.tasks.length ? (({ items, nav }) => `<ul class="rows">${items.map((t) => `<li><div><b>${esc(S.playbooks.find((p) => p.id === t.playbookId)?.name ?? t.playbookId)}</b> <span class="tag tag-muted">${esc(t.status)}</span><div class="small muted">Due ${when(t.dueAt)}</div>${t.summary ? `<p class="pre small">${esc(t.summary)}</p>` : ''}</div>${['queued', 'claimed'].includes(t.status) ? '' : trashBtn('task', t.id, 'this job')}</li>`).join('')}</ul>${nav}`)(paged('tasks', S.tasks)) : '<p class="muted">No tasks yet.</p>'}</section>`;
+      <section class="card"><h2>Recent tasks</h2>${S.tasks.length ? (({ items, nav }) => `<ul class="rows">${items.map((t) => `<li><div><b>${esc(S.playbooks.find((p) => p.id === t.playbookId)?.name ?? t.playbookId)}</b> <span class="tag tag-muted">${esc(t.status)}</span><div class="small muted">Due ${when(t.dueAt)}</div>${t.summary ? `<div class="md small">${mdBlock(t.summary)}</div>` : ''}</div>${['queued', 'claimed'].includes(t.status) ? '' : trashBtn('task', t.id, 'this job')}</li>`).join('')}</ul>${nav}`)(paged('tasks', S.tasks)) : '<p class="muted">No tasks yet.</p>'}</section>`;
   },
 
   agents() {
@@ -766,7 +768,7 @@ function prepExtra(c, strategyId, symbol, exchange, list) {
   if (item.type === 'attest') return `<div class="actions prep-tools">${counting ? mark(false, 'Remove mark') : mark(true, c.status === 'missing' ? 'I checked this' : 'I checked it again')}</div>`;
   const today = S.status.today;
   const records = recordsFor(item, symbol, exchange, ['verified', 'found'], list).slice(0, 3);
-  const rows = records.map((e) => `<li class="prep-record"><div>${recordTag(e)} ${e.exchange ? `<span class="tag tag-muted">${esc(e.exchange)}</span> ` : ''}${esc(e.summary || (e.price ? price(e.price) : ''))}
+  const rows = records.map((e) => `<li class="prep-record"><div>${recordTag(e)} ${e.exchange ? `<span class="tag tag-muted">${esc(e.exchange)}</span> ` : ''}${e.summary ? mdInline(e.summary) : e.price ? price(e.price) : ''}
       <div class="small muted">${e.by === 'owner' ? 'You' : `Found by ${esc(actorName(e.by))}`} · ${when(e.observedAt)}${e.status === 'verified' ? ` · good until ${esc(e.goodUntil)}` : ''}</div>${flagsHtml(e)}</div>
       <div class="actions">${e.status === 'verified' ? mark(true, counting ? 'Use this record instead (the wait starts again)' : 'Use this verified record', e.id) : verifyButton(e)}</div></li>`).join('');
   const sym = recordSymbol(item, symbol);
@@ -845,7 +847,7 @@ function requestExtra(c, i) {
   const item = itemDef(i.strategyId, c.id.replace(/^item:/, ''));
   if (!item || item.type !== 'evidence' || c.status === 'pass' || (item.stage ?? 'before') === 'research') return '';
   return recordsFor(item, i.symbol, i.plan?.exchange ?? 'NSE', ['found']).slice(0, 2)
-    .map((e) => `<div class="confirm-row"><span class="small">${e.by === 'owner' ? 'You' : esc(actorName(e.by))} found at ${when(e.observedAt)}${e.exchange ? ` (${esc(e.exchange)})` : ''}: ${esc(String(e.summary).slice(0, 160))} <span class="tag tag-warn">not verified</span></span>${verifyButton(e)}</div>`).join('');
+    .map((e) => `<div class="confirm-row"><span class="small">${e.by === 'owner' ? 'You' : esc(actorName(e.by))} found at ${when(e.observedAt)}${e.exchange ? ` (${esc(e.exchange)})` : ''}: ${mdInline(String(e.summary).slice(0, 160))} <span class="tag tag-warn">not verified</span></span>${verifyButton(e)}</div>`).join('');
 }
 
 function tile(label, value, used, limit, hint) {
@@ -912,7 +914,7 @@ function evidenceFor(i) {
 }
 
 function evidenceRow(e, withTrash = false) {
-  const value = e.kind === 'quote' ? price(e.price) : e.kind === 'funding' ? `up to ${funding(e.marginPct)}` : esc(e.summary);
+  const value = e.kind === 'quote' ? price(e.price) : e.kind === 'funding' ? `up to ${funding(e.marginPct)}` : mdInline(e.summary);
   const meta = [
     e.by === 'owner' ? 'You' : `Found by ${esc(actorName(e.by))}`,
     e.exchange ? esc(e.exchange) : '',
@@ -1021,7 +1023,7 @@ function noteHtml(n) {
     return `<article class="note snap-note"><p><a href="${esc(href)}">${esc(sectionLabel(n.section))}${n.exchange ? ` · ${esc(n.exchange)}` : ''} · as of ${esc(shortDate(n.asOf))}</a>
       <span class="small muted">${n.by === 'owner' ? 'Written by you' : 'Written by a model'}${isCurrentSection(n) ? '' : ' · an earlier version'} · opens the Snapshot</span></p></article>`;
   }
-  return `<article class="note"><div class="card-head"><h3>${n.symbol ? `${symLink(n.symbol)} · ` : ''}${esc(n.title)}</h3>${trashBtn('note', n.id, `note “${n.title}”`)}</div><p class="small muted">${byLine(n.by)} · ${when(n.at)}</p><p class="pre">${esc(n.body)}</p>${sourcesList(n.sources)}</article>`;
+  return `<article class="note"><div class="card-head"><h3>${n.symbol ? `${symLink(n.symbol)} · ` : ''}${esc(n.title)}</h3>${trashBtn('note', n.id, `note “${n.title}”`)}</div><p class="small muted">${byLine(n.by)} · ${when(n.at)}</p><div class="md">${mdBlock(n.body)}</div>${sourcesList(n.sources)}</article>`;
 }
 
 /** Every symbol that has requests, lots, evidence or notes, most recently active first. */
@@ -1072,7 +1074,7 @@ function strategyEditor(id) {
   if (!base) return '<p>Strategy not found.</p>';
   const d = (drafts.strategy?.key === id ? drafts.strategy.value : null) ?? structuredClone(base);
   const kinds = Object.keys(S.meta.evidenceKinds);
-  return `<header class="page-head"><div><a href="#/strategies">Back to strategies</a><h1>${id === 'new' ? 'New strategy' : `Edit ${esc(base.name)}`}</h1></div></header>
+  return `<header class="page-head"><div><a class="back" href="#/strategies">Back to strategies</a><h1>${id === 'new' ? 'New strategy' : `Edit ${esc(base.name)}`}</h1></div></header>
     <p class="lead">Saving creates a new version. Requests made against the old version can no longer be approved.</p>
     <form class="card form" data-form="strategy" data-key="${esc(id)}">
       ${id === 'new' ? field('Start from', `<select name="copyFrom">${options([['', 'Blank checklist'], ...S.strategies.map((s) => [s.id, `Copy of ${s.name}`])], d.copyFrom ?? '')}</select>`, 'Copies the checklist so you can change it. The original stays as it is.') : ''}
@@ -1128,7 +1130,7 @@ function playbookEditor(id) {
     : S.playbooks.find((p) => p.id === id);
   if (!base) return '<p>Playbook not found.</p>';
   const s = base.schedule;
-  return `<header class="page-head"><div><a href="#/playbooks">Back to playbooks</a><h1>${id === 'new' ? 'New playbook' : `Edit ${esc(base.name)}`}</h1></div></header>
+  return `<header class="page-head"><div><a class="back" href="#/playbooks">Back to playbooks</a><h1>${id === 'new' ? 'New playbook' : `Edit ${esc(base.name)}`}</h1></div></header>
     <form class="card form" data-form="playbook" data-id="${id === 'new' ? '' : esc(id)}">
       ${id === 'new' ? field('Start from', `<select name="template">${options([...Object.entries(templates).map(([k, p]) => [k, p.label]), ['blank', 'Blank – write your own']], chosen)}</select>`, 'Fills everything below. You can change any of it.') : ''}
       <div class="grid">${field('Name', `<input name="name" required value="${esc(base.name)}">`)}
@@ -1598,6 +1600,8 @@ function render() {
       <p class="small muted">Details: ${esc(err.message)}</p></section>`;
   }
   main.innerHTML = restartBanner() + html;
+  main.querySelector('.page-head')?.insertAdjacentHTML('beforeend', `<div class="export-tools">
+    <button type="button" class="btn" data-export="file">Export as Markdown</button><button type="button" class="btn" data-export="copy">Copy</button></div>`);
   addInfoButtons(main);
   addFolds(main, route, !args.length && FOLDED_AT_FIRST.has(route));
   document.querySelectorAll('form').forEach(syncFunding);
@@ -1615,6 +1619,25 @@ function render() {
     ? '<p class="small">Agents are <b>paused</b></p><a class="btn" href="#/settings">Resume agents…</a>'
     : `<p class="small">Agents: ${S.agents.filter((a) => !a.revoked && a.scope !== 'off').length} active</p><button class="btn danger" data-action="pause">Pause all agents</button>`;
 }
+
+// Export exactly what is on the page, as a .md file or to the clipboard.
+document.addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-export]');
+  if (!el) return;
+  const text = pageToMarkdown(main, { title: 'Swing Desk', at: when(new Date().toISOString()) });
+  if (el.dataset.export === 'copy') {
+    try { await navigator.clipboard.writeText(text); toast('Copied this page as Markdown.'); } catch { toast('Could not copy. Use Export as Markdown instead.', true); }
+    return;
+  }
+  const page = location.hash.replace(/^#\/?/, '') || 'today';
+  const name = `swing-desk-${decodeURIComponent(page).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${indiaToday()}.md`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast(`Saved ${name} to your downloads.`);
+});
 
 window.addEventListener('hashchange', () => {
   if (!S) return; // first load still running; it renders the current hash when done
