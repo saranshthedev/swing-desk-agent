@@ -4,6 +4,13 @@
 
 const STAGE_ORDER = ['research', 'before'];
 const CHECK_TYPE = { attest: 'You answer', evidence: 'Needs evidence', rule: 'App checks' };
+const STAGE_TAG = { research: ['Before trading day', 'tag-stage-research'], before: ['On trading day', 'tag-stage-before'] };
+
+/** Marker shown on every checklist item: when it is checked. Missing stage means on the day. */
+export function stageTag(stage) {
+  const [label, cls] = STAGE_TAG[stage] ?? STAGE_TAG.before;
+  return `<span class="tag ${cls}">${label}</span>`;
+}
 
 /**
  * checks: [{ id, label, status, detail, required, group, stage, help }]
@@ -56,7 +63,7 @@ function groupHtml(gid, items, opts) {
 function itemHtml(c, { esc, tag, answer, extra }) {
   const key = c.id.replace(/^item:/, '');
   const box = answer === 'ask' && c.status === 'ask';
-  const head = `${tag(c.status)} <b>${esc(c.label)}</b>${c.required ? '' : ' <span class="muted small">(optional)</span>'}`;
+  const head = `${tag(c.status)} ${stageTag(c.stage)} <b>${esc(c.label)}</b>${c.required ? '' : ' <span class="muted small">(optional)</span>'}`;
   const body = `<div class="small muted">${esc(c.detail)}</div>${c.help && c.help !== c.detail ? `<div class="small cl-help">${esc(c.help)}</div>` : ''}`;
   const more = extra?.(c) ?? '';
   const attrs = `data-check="${esc(key)}" data-stage="${esc(c.stage ?? 'before')}"`;
@@ -71,7 +78,7 @@ export function libraryHtml(checklist, { esc }) {
     <summary><span class="cl-group-title">${esc(g.title)}</span> <span class="small muted">${g.items.length} checks</span></summary>
     <p class="muted">${esc(g.why)}</p>
     <ul class="rows cl-items">${g.items.map((i) => `<li><div>
-      <span class="tag ${stageOf(i, checklist) === 'research' ? 'tag-ask' : 'tag-warn'}">${stageOf(i, checklist) === 'research' ? 'Research' : 'On the day'}</span>
+      ${stageTag(stageOf(i))}
       <span class="tag tag-muted">${checkType(i)}</span>${i.core ? ' <span class="tag tag-ok">Core</span>' : ''}
       <b>${esc(i.label)}</b>
       <div class="small">${esc(i.help)}</div>
@@ -102,6 +109,6 @@ export function strategyItemsHtml(items, { checklist, esc }) {
     if (!list.length) return '';
     return `<h3 class="cl-stage-title">${stage === 'research' ? '1' : '2'}. ${esc(checklist.stages[stage].title)} <span class="small muted">${list.length} checks</span></h3>
       <div class="cl-group-grid">${groupsOf(list, checklist).map(([gid, group]) => `<details class="cl-group"><summary><span class="cl-group-title">${esc(groupName(gid, checklist))}</span> <span class="small muted">${group.length}</span></summary>
-        <ul class="checklist">${group.map((it) => `<li><span class="tag tag-muted">${it.type === 'evidence' ? `Evidence: ${esc(it.kind)}${it.scope === 'market' ? ' (market)' : ''}` : CHECK_TYPE[it.type]}</span> ${esc(it.label)}${it.required ? '' : ' <span class="muted">(optional)</span>'}</li>`).join('')}</ul></details>`).join('')}</div>`;
+        <ul class="checklist">${group.map((it) => `<li>${stageTag(it.stage)} <span class="tag tag-muted">${it.type === 'evidence' ? `Evidence: ${esc(it.kind)}${it.scope === 'market' ? ' (market)' : ''}` : CHECK_TYPE[it.type]}</span> ${esc(it.label)}${it.required ? '' : ' <span class="muted">(optional)</span>'}</li>`).join('')}</ul></details>`).join('')}</div>`;
   }).join('');
 }

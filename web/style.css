@@ -16,6 +16,8 @@
   --bad-bg: #fde8e7; --bad: #9b1c14;
   --ask-bg: #e8ebff; --ask: #2333a6;
   --chip: #f1f2f4;
+  --stage-r-bg: #e7f0fb; --stage-r: #1b4f8f;
+  --stage-d-bg: #fdeee3; --stage-d: #8f3b0a;
   --radius: 12px;
   font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   color-scheme: light dark;
@@ -28,6 +30,7 @@
     --accent: #6d7cff; --accent-ink: #0d1117; --chip: #222933;
     --ok-bg: #0f2e2a; --ok: #6fd3c4; --warn-bg: #33240d; --warn: #f2b45c;
     --bad-bg: #3a1513; --bad: #ff9b92; --ask-bg: #1c2350; --ask: #b3bcff;
+    --stage-r-bg: #12263f; --stage-r: #9cc5f5; --stage-d-bg: #3a1f10; --stage-d: #f5a877;
   }
 }
 
@@ -97,6 +100,8 @@ meter { width: 100%; height: 8px; }
 .tag-bad { background: var(--bad-bg); color: var(--bad); }
 .tag-ask { background: var(--ask-bg); color: var(--ask); }
 .tag-muted { background: var(--chip); color: var(--ink-2); }
+.tag-stage-research { background: var(--stage-r-bg); color: var(--stage-r); }
+.tag-stage-before { background: var(--stage-d-bg); color: var(--stage-d); }
 .scope-read { background: var(--ok-bg); color: var(--ok); }
 .scope-draft { background: var(--ask-bg); color: var(--ask); }
 .scope-propose { background: var(--warn-bg); color: var(--warn); }

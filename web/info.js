@@ -83,7 +83,7 @@ export const INFO = {
   maxAgeDays: 'How old the proof may be, in days. 0 means it must be from today.',
   required: 'Ticked: the trade cannot be approved without this. Not ticked: shown only as a note.',
   group: 'Which heading this check sits under, like “Company fundamentals”. A group is done only when all its required checks pass.',
-  stage: 'Research: done on the Prepare page days before; it counts only after the strategy’s buffer days and until its expire days. Just before buying: checked on the day, on the request page.',
+  stage: 'Before trading day: research done on the Prepare page days before; it counts only after the strategy’s buffer days and until its expire days. On trading day: checked just before buying, on the request page.',
   bufferDays: 'How many days a prepared research item must wait before it counts. At least 3, so you never buy on the day you first look. Example: buffer 3 and you tick it on Monday: it counts from Thursday.',
   expireDays: 'How many days after you prepare an item it still counts. At most 21. Example: buffer 3, expire 5: research ticked on Monday counts Thursday to Saturday, then must be prepared again.',
   window: 'Research must age before it counts, and stops counting later. This cools you off: no buying on the day you first see a price move. Example: buffer 3, expire 5: ticked on Monday counts Thursday to Saturday.',

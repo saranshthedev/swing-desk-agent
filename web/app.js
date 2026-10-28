@@ -448,7 +448,7 @@ const pages = {
     const count = c.groups.reduce((a, g) => a + g.items.length, 0);
     return `<header class="page-head"><div><h1>Pre-trade checklist</h1><p class="muted">${c.groups.length} groups · ${count} checks</p></div>
       <div class="actions"><button class="btn" data-action="copy-complete">Make my own strategy from this list</button></div></header>
-      <p class="lead">Everything worth looking at before a swing trade, in two stages. <b>Research</b> is done on the Prepare page days before; each strategy says how long it must wait and how long it keeps counting (${esc(windowText({ bufferDays: S.meta.checklist.window.defaultBuffer, expireDays: S.meta.checklist.window.defaultExpire }))}). <b>On the day</b> must be checked just before buying. Strategies pick from this list. Nothing here is advice.</p>
+      <p class="lead">Everything worth looking at before a swing trade, in two stages. <b>Before trading day</b> checks are research done on the Prepare page days before; each strategy says how long it must wait and how long it keeps counting (${esc(windowText({ bufferDays: S.meta.checklist.window.defaultBuffer, expireDays: S.meta.checklist.window.defaultExpire }))}). <b>On trading day</b> checks are done just before buying. Strategies pick from this list. Nothing here is advice.</p>
       <p class="small muted">Whole-market checks (Nifty, VIX, US and Asian markets, crude oil, USDINR, FII/DII) are saved once a day under the name <b>${esc(c.market)}</b> and count for every stock.</p>
       ${libraryHtml(c, { esc })}
       <section class="card"><h2>Free places to look</h2><ul class="rows">${Object.values(c.sources).map(([name, url]) => `<li><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)}</a></li>`).join('')}</ul></section>`;
@@ -789,7 +789,7 @@ function prepareBody(symbol, exchange, d) {
       <p class="small">The full pre-trade list, for every stock. Mark an item when you have checked it; it counts only after the wait. A mark here also counts for every strategy that uses the same item. Core items feed the desk’s view below; only a request’s own strategy items can block approval.</p>
       <p class="small muted">Price and chart items use only ${esc(exchange)} records. Switch the exchange above to prepare on the other one.</p>
       ${checklistHtml(research, { checklist: cl, esc, tag, extra: (c) => prepExtra(c, null, symbol, exchange, d.records) })}
-      <details class="cl-later"><summary>On the day: ${later.length} checks done on the request page</summary>${checklistHtml(later, { checklist: cl, esc, tag })}</details></section>`;
+      <details class="cl-later"><summary>On trading day: ${later.length} checks done on the request page</summary>${checklistHtml(later, { checklist: cl, esc, tag })}</details></section>`;
   const strategies = d.strategies.map((r) => {
     const fit = d.desk.strategies.find((x) => x.id === r.strategyId);
     const items = r.checks.filter((c) => c.stage === 'research');
