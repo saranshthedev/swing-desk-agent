@@ -342,9 +342,10 @@ export function callTool(store, agentId, name, args = {}) {
   if (name !== 'whoami') {
     if (paused) throw new UserError('The owner has paused all agents. Try again later.');
     if (LEVEL[agent.scope] < LEVEL[tool.level]) throw new UserError(`This needs ${tool.level} access; you have ${agent.scope}.`);
-    if (store.callsSince(agentId, now - 3_600_000) >= agent.limits.callsPerHour) throw new UserError('Hourly call limit reached.');
-    if (tool.write === 'write' && usage.writes >= agent.limits.writesPerDay) throw new UserError('Daily write limit reached.');
-    if (tool.write === 'intent' && usage.intents >= agent.limits.intentsPerDay) throw new UserError('Daily request limit reached.');
+    const on = (k) => !agent.limits.off?.includes(k);
+    if (on('callsPerHour') && store.callsSince(agentId, now - 3_600_000) >= agent.limits.callsPerHour) throw new UserError('Hourly call limit reached.');
+    if (tool.write === 'write' && on('writesPerDay') && usage.writes >= agent.limits.writesPerDay) throw new UserError('Daily write limit reached.');
+    if (tool.write === 'intent' && on('intentsPerDay') && usage.intents >= agent.limits.intentsPerDay) throw new UserError('Daily request limit reached.');
   }
   return tool.run(store, agent, args ?? {});
 }

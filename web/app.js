@@ -495,7 +495,7 @@ const pages = {
         ${field('Start from', `<select name="agentPreset">${options([...Object.entries(S.meta.presets.agents).map(([k, p]) => [k, `${p.label} – ${p.about}`]), ['custom', 'Custom – choose everything yourself']], 'researcher')}</select>`)}
         <div class="grid">${field('Name', '<input name="name" required placeholder="Claude research">')}${field('App', '<input name="client" placeholder="Claude Code">')}
         ${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), S.meta.presets.agents.researcher.scope)}</select>`)}${field('Key lifetime (days)', num('expiresDays', 30, 'step="1" min="1" max="365"'))}
-        ${field('Requests per day', num('intentsPerDay', S.meta.presets.agents.researcher.limits.intentsPerDay, 'step="1" min="0"'))}${field('Writes per day', num('writesPerDay', S.meta.presets.agents.researcher.limits.writesPerDay, 'step="1" min="0"'))}${field('Calls per hour', num('callsPerHour', S.meta.presets.agents.researcher.limits.callsPerHour, 'step="1" min="0"'))}</div>
+        ${limitFields(S.meta.presets.agents.researcher.limits)}</div>
         <ul class="small muted">${Object.entries(SCOPE_HELP).map(([k, v]) => `<li><b>${k}</b>: ${v}</li>`).join('')}</ul>
         ${pinField()}<button class="btn primary">Create agent and key</button></form>
       <section class="card"><h2>Recent MCP calls</h2>${S.calls.length ? (({ items, nav }) => `<ul class="rows">${items.map((c) => `<li><span>${esc(S.agentNames[c.agent_id] ?? c.agent_id)} · <code>${esc(c.tool)}</code> ${c.ok ? '' : `<span class="tag tag-bad">${esc(c.error)}</span>`}</span><span class="small muted">${when(c.at)}</span></li>`).join('')}</ul>${nav}`)(paged('calls', S.calls)) : '<p class="muted">No calls yet.</p>'}</section>`;
@@ -975,14 +975,26 @@ document.addEventListener('toggle', (e) => {
   host.firstElementChild.append(script);
 }, true);
 
+// ---------- agent limits: a number plus an On switch each; a switched-off limit is not enforced ----------
+const LIMITS = [['intentsPerDay', 'Requests per day', 'requests/day'], ['writesPerDay', 'Writes per day', 'writes/day'], ['callsPerHour', 'Calls per hour', 'calls/hour']];
+const limitOn = (limits, k) => !limits.off?.includes(k);
+function limitFields(limits) {
+  return LIMITS.map(([k, label]) => field(label, `${num(k, limits[k], 'step="1" min="0"')}<label class="check inline"><input type="checkbox" name="${k}On" ${limitOn(limits, k) ? 'checked' : ''}> <span>On</span></label>`, limitOn(limits, k) ? '' : 'Off: no limit.')).join('');
+}
+/** Form data → { …numbers, off: [switched-off limits] } for agent.add and agent.update. */
+function limitsFrom(data) {
+  return { ...Object.fromEntries(LIMITS.map(([k]) => [k, data[k]])), off: LIMITS.map(([k]) => k).filter((k) => data[`${k}On`] === false) };
+}
+const limitsText = (limits) => LIMITS.map(([k, , unit]) => (limitOn(limits, k) ? `${limits[k]} ${unit}` : `no limit on ${unit}`)).join(' · ');
+
 function agentRow(a) {
   const u = a.usage[S.status.today] ?? { writes: 0, intents: 0 };
   return `<li class="agent">
     <div class="agent-head"><div><b>${esc(a.name)}</b> <span class="tag scope-${a.scope}">${a.scope}</span><div class="small muted">${esc(a.client)}</div></div>
-      <dl class="agent-facts"><div><dt>Limits</dt><dd>${a.limits.intentsPerDay} requests/day · ${a.limits.writesPerDay} writes/day · ${a.limits.callsPerHour} calls/hour</dd></div><div><dt>Used today</dt><dd>${u.intents} requests · ${u.writes} writes</dd></div><div><dt>Key expires</dt><dd>${when(a.expiresAt)}</dd></div></dl></div>
+      <dl class="agent-facts"><div><dt>Limits</dt><dd>${esc(limitsText(a.limits))}</dd></div><div><dt>Used today</dt><dd>${u.intents} requests · ${u.writes} writes</dd></div><div><dt>Key expires</dt><dd>${when(a.expiresAt)}</dd></div></dl></div>
     <div class="agent-tools">
       <details><summary class="btn">Change access or limits</summary><form class="form" data-form="agent-update"><input type="hidden" name="id" value="${esc(a.id)}">
-        <div class="grid">${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), a.scope)}</select>`)}${field('Requests per day', num('intentsPerDay', a.limits.intentsPerDay, 'step="1" min="0"'))}${field('Writes per day', num('writesPerDay', a.limits.writesPerDay, 'step="1" min="0"'))}${field('Calls per hour', num('callsPerHour', a.limits.callsPerHour, 'step="1" min="0"'))}</div>
+        <div class="grid">${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), a.scope)}</select>`)}${limitFields(a.limits)}</div>
         ${pinField()}<div class="actions"><button class="btn primary">Save changes</button><button class="btn" name="rekey" value="1">Replace key</button></div><p class="small muted">Replace key: the old key stops working and a new one is shown once.</p></form></details>
       <details><summary class="btn danger">Disconnect</summary><form class="form" data-form="agent-update"><input type="hidden" name="id" value="${esc(a.id)}"><input type="hidden" name="revoked" value="1">
         <p>Disconnecting switches this key off for good. ${esc(a.name)} can no longer call the desk. Its past calls, research and requests stay in the ledger. To connect again, add a new agent.</p>
@@ -1263,7 +1275,7 @@ const forms = {
   async 'agent-add'(form, data) {
     const r = await act('agent.add', {
       name: data.name, client: data.client, scope: data.scope, expiresDays: data.expiresDays, pin: data.pin,
-      limits: { intentsPerDay: data.intentsPerDay, writesPerDay: data.writesPerDay, callsPerHour: data.callsPerHour },
+      limits: limitsFrom(data),
     });
     drafts.newKey = { name: data.name, key: r.key };
   },
@@ -1278,7 +1290,7 @@ const forms = {
       toast('Agent disconnected. Its key no longer works.');
       return;
     }
-    await act('agent.update', { id: data.id, scope: data.scope, limits: { intentsPerDay: data.intentsPerDay, writesPerDay: data.writesPerDay, callsPerHour: data.callsPerHour }, pin: data.pin });
+    await act('agent.update', { id: data.id, scope: data.scope, limits: limitsFrom(data), pin: data.pin });
     toast('Agent updated.');
   },
   async strategy(form) {
@@ -1502,6 +1514,7 @@ function applyAgentPreset(form, key) {
   if (!p) return;
   setValue(form, 'scope', p.scope);
   for (const [k, v] of Object.entries(p.limits)) setValue(form, k, v);
+  for (const [k] of LIMITS) if (form.elements[`${k}On`]) form.elements[`${k}On`].checked = limitOn(p.limits, k);
 }
 
 // Typing your own number turns a preset choice into “Custom”.
@@ -1521,7 +1534,7 @@ document.addEventListener('input', (e) => {
     if (match) applyAgentPreset(form, match);
     setValue(form, 'agentPreset', match ?? 'custom');
   }
-  if (form?.dataset.form === 'agent-add' && ['intentsPerDay', 'writesPerDay', 'callsPerHour'].includes(e.target.name)) setValue(form, 'agentPreset', 'custom');
+  if (form?.dataset.form === 'agent-add' && LIMITS.some(([k]) => e.target.name === k || e.target.name === `${k}On`)) setValue(form, 'agentPreset', 'custom');
 });
 // Paste boxes keep what you typed, and whether they are open, across redraws.
 const snapDraftOf = (el) => { const key = el.closest?.('details.snap-paste')?.dataset.draft; return key ? (snapDrafts[key] ??= {}) : null; };
@@ -1555,7 +1568,7 @@ function syncFunding(form) {
 // ---------- update check ----------
 
 /** Must match API_VERSION in src/version.js. Bump both when the page needs new server data. */
-const CLIENT_API = 6;
+const CLIENT_API = 7;
 const serverIsOld = () => (S?.meta?.api ?? 1) < CLIENT_API;
 
 /** The server keeps its code in memory; after an update it must be restarted. */

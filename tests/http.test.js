@@ -92,7 +92,7 @@ test('evidence.verify, correct and flag work without a PIN; old research routes 
     assert.ok(Array.isArray(state.recommendations));
     assert.ok(state.meta.checklist.window);
     assert.equal(state.meta.checklist.researchValidDays, undefined);
-    assert.equal(state.meta.api, 6);
+    assert.equal(state.meta.api, 7);
   } finally { t.server.close(); }
 });
 

@@ -114,6 +114,13 @@ function agentLimits(limits = {}) {
   for (const [k, v] of Object.entries(out)) {
     if (!Number.isInteger(v) || v < 0 || v > 10_000) throw new UserError(`${k} must be a whole number from 0 to 10000.`);
   }
+  // Limits the owner switched off are not enforced; the number is kept for when it is switched back on.
+  if (limits.off !== undefined) {
+    if (!Array.isArray(limits.off)) throw new UserError('Switched-off limits must be a list.');
+    for (const k of limits.off) if (!(k in out)) throw new UserError(`Unknown limit ${k}.`);
+    const off = [...new Set(limits.off)];
+    if (off.length) out.off = off;
+  }
   return out;
 }
 

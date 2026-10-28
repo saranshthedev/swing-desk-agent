@@ -55,9 +55,9 @@ export const INFO = {
   scope: 'What this AI may do. Read: only look. Draft: also save research. Propose: also send trade ideas for you to approve. No level can approve or place orders.',
   agentPreset: 'Pick a ready-made access level and daily limits. You can still change them below.',
   expiresDays: 'After this many days the key stops working and you make a new one. Shorter is safer.',
-  intentsPerDay: 'The most trade ideas (requests) this AI can send in one day. 0 = none.',
-  writesPerDay: 'The most notes and evidence this AI can save in one day.',
-  callsPerHour: 'The most times this AI can talk to the app in one hour. Stops runaway loops.',
+  intentsPerDay: 'The most trade ideas (requests) this AI can send in one day. 0 = none. Untick On for no limit (you still approve every request).',
+  writesPerDay: 'The most notes and evidence this AI can save in one day. Untick On for no limit, e.g. for a big research job.',
+  callsPerHour: 'The most times this AI can talk to the app in one hour. Stops runaway loops. Untick On for no limit; tick it again afterwards.',
   revoked: 'Tick to switch this key off for good. The AI can no longer use the app with it.',
 
   // ---------- playbooks ----------

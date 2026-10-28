@@ -76,6 +76,27 @@ test('daily request quota and key expiry are enforced', () => {
   assert.match(c.tool('whoami').content[0].text, /expired/);
 });
 
+test('a limit switched off is not enforced; the others still are', () => {
+  const d = desk();
+  const agent = d.addAgent('draft', { writesPerDay: 1, callsPerHour: 2, off: ['writesPerDay'] });
+  const c = client(d, agent.key);
+  assert.equal(c.tool('add_note', { title: 't', body: 'b' }).isError, undefined);
+  assert.equal(c.tool('add_note', { title: 't', body: 'b' }).isError, undefined); // write limit is off
+  assert.match(c.tool('add_note', { title: 't', body: 'b' }).content[0].text, /Hourly call limit/);
+  d.owner(C.updateAgent, { id: agent.id, limits: { writesPerDay: 1, callsPerHour: 2, off: ['callsPerHour'] } });
+  d.clock.now += 3_600_000;
+  assert.match(c.tool('add_note', { title: 't', body: 'b' }).content[0].text, /Daily write limit/);
+});
+
+test('limit switches accept only known limits', () => {
+  const d = desk();
+  assert.throws(() => d.addAgent('read', { off: ['approvals'] }), /limit/i);
+  const { id } = d.addAgent('read', { off: ['callsPerHour', 'callsPerHour'] });
+  assert.deepEqual(d.store.read((s) => s.agents[id].limits.off), ['callsPerHour']);
+  const { id: plain } = d.addAgent('read', {});
+  assert.equal(d.store.read((s) => s.agents[plain].limits.off), undefined);
+});
+
 test('revoking an agent stops its key immediately', () => {
   const d = desk();
   const agent = d.addAgent('read');
