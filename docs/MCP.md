@@ -88,6 +88,27 @@ the owner to look). `add_recommendation` stores your wait / buy / hold / sell vi
 Market-wide facts – Nifty and VIX, US and Asian markets, crude oil, USDINR, FII/DII flows – are saved
 once a day with `add_evidence` (kind `macro`) under the symbol **MARKET** and count for every stock.
 
+### When the owner says "research" a stock or a list
+
+It means: run the strategy checklists and fill every card for **each stock separately**, so the
+stock is ready for a request. Never answer with one combined summary instead.
+
+1. **Checklists.** `list_strategies`, then `get_research_status` for the strategies that could fit.
+2. **Snapshot**: all five `add_structured_note` sections: `overview` (with `exchange`), `swot`,
+   `results`, `shareholding`, `peers`.
+3. **Records**: an `add_evidence` record, with sources, for every research-stage evidence item the
+   checklists need (for example sector, weekly zones, results calendar, promoter and fundamentals),
+   each with `topic: "item:<id>"`.
+4. **Note**: one `add_note` that opens with the verdict, then lists **every enabled strategy**
+   from `list_strategies`, each marked pick or not, with the reason (which items pass, fail or
+   need the owner). Do not skip strategies that clearly do not fit; say why they do not. End with what would make it tradable
+   and a size check against the owner's settings. Do not repeat figures that are already in the
+   Snapshot or Records cards; point to them instead.
+5. **Recommendation**: `add_recommendation` with the call and the `strategyIds` worth watching.
+
+Check `whoami` limits first; if the work will not fit today's writes or the hourly calls, tell
+the owner before starting.
+
 ## Where information comes from
 
 The desk adds no data source of its own and never will use a paid one. Your model finds
