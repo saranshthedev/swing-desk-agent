@@ -105,7 +105,12 @@ export class Store {
     const rows = before
       ? this.db.prepare('SELECT * FROM events WHERE seq < ? ORDER BY seq DESC LIMIT ?').all(before, max)
       : this.db.prepare('SELECT * FROM events ORDER BY seq DESC LIMIT ?').all(max);
-    return rows.map((r) => ({ seq: r.seq, at: r.at, actor: r.actor, type: r.type, data: JSON.parse(r.data), hash: r.hash }));
+    return rows.map(eventRow);
+  }
+
+  /** Events with a seq greater than `seq`, oldest first. */
+  eventsAfter(seq) {
+    return this.db.prepare('SELECT * FROM events WHERE seq > ? ORDER BY seq').all(seq).map(eventRow);
   }
 
   /** Recompute the whole hash chain. Returns { ok, count, brokenAt? }. */
@@ -209,3 +214,5 @@ export class Store {
 export function newId(prefix) {
   return `${prefix}_${randomBytes(6).toString('hex')}`;
 }
+
+const eventRow = (r) => ({ seq: r.seq, at: r.at, actor: r.actor, type: r.type, data: JSON.parse(r.data), hash: r.hash });
