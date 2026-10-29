@@ -2,12 +2,13 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { desk } from './helpers.js';
 import { ChatManager } from '../src/chat/manager.js';
 import { CHAT_KEY_ENV } from '../src/chat/cli.js';
+import { UserError } from '../src/core/settings.js';
 import { addMessage, createThread, getThread, messages, setChatSetting, setThreadSession } from '../src/chat/history.js';
 import { stopMessage, chatLimits } from '../src/chat/limits.js';
 
@@ -25,7 +26,7 @@ function fakeSpawn() {
     child.input = [];
     child.stdin.on('data', (c) => child.input.push(...String(c).split('\n').filter(Boolean).map((l) => JSON.parse(l))));
     child.killed = false;
-    child.kill = () => { child.killed = true; calls.order.push(['kill', calls.indexOf(entry)]); child.emit('exit', null, 'SIGTERM'); };
+    child.kill = () => { child.killed = true; calls.order.push(['kill', calls.indexOf(entry)]); child.emit('close', null, 'SIGTERM'); };
     const entry = { bin, args, opts, child };
     calls.push(entry);
     calls.order.push(['spawn', calls.length - 1]);
@@ -35,7 +36,7 @@ function fakeSpawn() {
   return { spawn, calls };
 }
 
-function setup(t, { limits, bin = 'claude' } = {}) {
+function setup(t, { limits, bin = 'claude', wrap } = {}) {
   mock.timers.enable({ apis: ['setTimeout'] });
   const d = desk();
   const agent = d.addAgent('draft');
@@ -45,7 +46,8 @@ function setup(t, { limits, bin = 'claude' } = {}) {
   d.store.issueKey = (id) => { const k = issue(id); keys.push(k); return k; };
   if (limits) setChatSetting(d.store, 'limits', chatLimits(limits));
   const dataDir = mkdtempSync(join(tmpdir(), 'chat-mgr-'));
-  const { spawn, calls } = fakeSpawn();
+  const { spawn: fake, calls } = fakeSpawn();
+  const spawn = wrap ? wrap(fake) : fake;
   const chat = new ChatManager(d.store, { bin, dataDir, spawn });
   chat.rekey();
   const events = [];
@@ -268,7 +270,7 @@ test('process exit mid-turn ends the turn with an error', async (t) => {
   const { d, chat, calls, events } = setup(t);
   const { threadId } = chat.send({ text: 'Hi' });
   calls[0].child.stderr.write('secret stderr text');
-  calls[0].child.emit('exit', 1, null);
+  calls[0].child.emit('close', 1, null);
   const msgs = messages(d.store, threadId);
   assert.equal(msgs.at(-1).role, 'error');
   assert.equal(msgs.at(-1).text, 'Claude stopped unexpectedly. Send your message again; earlier replies are kept.');
@@ -354,7 +356,7 @@ test('the key never reaches messages, events or arguments', async (t) => {
   chat.send({ threadId, text: 'Again' });
   chat.stop();
   chat.send({ threadId, text: 'Third' });
-  calls.at(-1).child.emit('exit', 1, null);
+  calls.at(-1).child.emit('close', 1, null);
   assert.ok(keys.length >= 1);
   const key = keys.at(-1);
   for (const c of calls) {
@@ -363,4 +365,83 @@ test('the key never reaches messages, events or arguments', async (t) => {
   }
   const dump = JSON.stringify([events, messages(d.store, threadId), chat.status()]);
   for (const k of keys) assert.ok(!dump.includes(k));
+});
+
+test('rekey during a reply ends the turn like an owner stop', async (t) => {
+  const { d, chat, calls, events } = setup(t, { limits: { off: ['replyMinutes'] } });
+  const { threadId } = chat.send({ text: 'Go' });
+  await feed(calls[0].child, delta('Half'));
+  chat.rekey();
+  assert.equal(calls[0].child.killed, true);
+  assert.equal(chat.status().active, null);
+  const msgs = messages(d.store, threadId);
+  assert.deepEqual(msgs.map((m) => m.role), ['owner', 'claude', 'note']);
+  assert.equal(msgs[1].text, 'Half');
+  assert.equal(msgs[2].text, OWNER_STOP);
+  assert.equal(events.filter((e) => e.type === 'end').length, 1);
+  assert.deepEqual(events.filter((e) => e.type === 'busy').map((e) => e.threadId), [threadId, null]);
+  chat.send({ threadId, text: 'Again' }); // not stuck "still replying"
+  assert.equal(calls.length, 2);
+});
+
+test('stop notices are not sent back as owner corrections', async (t) => {
+  const { d, chat, calls } = setup(t);
+  const { threadId } = chat.send({ text: 'Go' });
+  chat.stop();
+  assert.equal(messages(d.store, threadId).at(-1).tool, 'stop');
+  chat.send({ threadId, text: 'After stop' });
+  await tick();
+  assert.equal(calls[1].child.input[0].message.content, 'After stop');
+  chat.stop();
+  addMessage(d.store, threadId, { role: 'note', text: 'You flagged ABC' });
+  chat.send({ threadId, text: 'With overrule' });
+  await tick();
+  const sent = calls[2].child.input[0].message.content;
+  assert.equal(sent, 'Owner corrections since your last reply:\n- You flagged ABC\n\nWith overrule');
+});
+
+test('assistant events with the same message id count as one Claude turn', async (t) => {
+  const { chat, calls } = setup(t, { limits: { modelTurns: 1 } });
+  const { threadId } = chat.send({ text: 'Go' });
+  const part = (content) => ({ type: 'assistant', message: { id: 'msg_1', content: [content] } });
+  await feed(calls[0].child, part({ type: 'text', text: 'a' }), part({ type: 'tool_use', id: 't1', name: 'WebSearch', input: {} }));
+  assert.equal(chat.status().active, threadId);
+  await feed(calls[0].child, { type: 'assistant', message: { id: 'msg_2', content: [] } });
+  assert.equal(chat.status().active, null);
+});
+
+test('output written before close is still read', async (t) => {
+  const { d, chat, calls } = setup(t);
+  const { threadId } = chat.send({ text: 'Hi' });
+  const child = calls[0].child;
+  child.emit('exit', 0, null); // exit alone does not end the turn
+  assert.equal(chat.status().active, threadId);
+  await feed(child, delta('Last words'), result('Last words'));
+  child.emit('close', 0, null);
+  assert.deepEqual(roles(d, threadId), ['owner', 'claude']);
+});
+
+test('a start failure stores a plain error and refuses without the raw error', async (t) => {
+  await t.test('folder cannot be made', (t) => {
+    const { d, chat, calls, dataDir, events } = setup(t);
+    writeFileSync(join(dataDir, 'chat'), 'a file in the way');
+    let err;
+    try { chat.send({ text: 'Hi' }); } catch (e) { err = e; }
+    assert.equal(err?.message, 'Claude stopped unexpectedly. Send your message again; earlier replies are kept.');
+    assert.ok(err instanceof UserError);
+    assert.equal(calls.length, 0);
+    assert.equal(chat.status().active, null);
+    const thread = getThread(d.store, events.find((e) => e.type === 'message').threadId);
+    assert.deepEqual(roles(d, thread.id), ['owner', 'error']);
+  });
+  await t.test('spawn throws', (t) => {
+    const { d, chat, events } = setup(t, { wrap: () => () => { throw Object.assign(new Error('spawn EINVAL --mcp-config'), { spawnargs: ['--mcp-config'] }); } });
+    assert.throws(() => chat.send({ text: 'Hi' }), (e) => !e.message.includes('mcp-config') && /stopped unexpectedly/.test(e.message));
+    assert.equal(chat.status().active, null);
+    const threadId = events.find((e) => e.type === 'message').threadId;
+    const msgs = messages(d.store, threadId);
+    assert.deepEqual(msgs.map((m) => m.role), ['owner', 'error']);
+    assert.ok(!JSON.stringify([msgs, events]).includes('mcp-config'));
+    assert.throws(() => chat.send({ threadId, text: 'again' }), /stopped unexpectedly/); // refused again, not stuck as busy
+  });
 });

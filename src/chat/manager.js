@@ -46,6 +46,7 @@ export class ChatManager {
   }
 
   rekey() {
+    if (this.#turn) this.stop('owner');
     this.#closeProcess();
     const id = this.#store.secret('chat_agent');
     this.#key = id ? this.#store.issueKey(id) : null;
@@ -105,14 +106,25 @@ export class ChatManager {
     const id = thread.id;
 
     this.#save(id, { role: 'owner', text });
-    const prompt = correctionsBlock(notesSinceReply(this.#store, id)) + text;
+    // Stop and limit notices are for the owner, not corrections for Claude.
+    const notes = notesSinceReply(this.#store, id).filter((n) => n.tool !== 'stop');
+    const prompt = correctionsBlock(notes) + text;
 
     if (this.#proc && this.#proc.threadId !== id) this.#closeProcess();
     this.#clearIdle();
-    if (!this.#proc) this.#start(thread);
+    if (!this.#proc) {
+      try {
+        this.#start(thread);
+      } catch {
+        // Never surface the raw error: it can carry arguments.
+        this.#proc = null;
+        this.#save(id, { role: 'error', text: UNEXPECTED });
+        throw new UserError(UNEXPECTED);
+      }
+    }
 
     const limits = this.#limits();
-    this.#turn = { threadId: id, text: '', toolCalls: 0, modelTurns: 0, limits, timer: null };
+    this.#turn = { threadId: id, text: '', toolCalls: 0, modelTurns: 0, seen: new Set(), limits, timer: null };
     if (limitOn(limits, 'replyMinutes')) {
       this.#turn.timer = this.#timers.setTimeout(() => this.stop('replyMinutes'), limits.replyMinutes * MIN);
     }
@@ -138,11 +150,12 @@ export class ChatManager {
     const child = this.#spawn(this.#bin, args, { cwd, env: { ...process.env, [CHAT_KEY_ENV]: this.#key } });
     const proc = { child, threadId: thread.id, buf: '' };
     this.#proc = proc;
-    child.stdin?.on('error', () => { /* the exit handler reports it */ });
+    child.stdin?.on('error', () => { /* the close handler reports it */ });
     child.stderr?.resume(); // drained, never read: it may echo arguments
     child.stdout.setEncoding?.('utf8');
     child.stdout.on('data', (chunk) => this.#onData(proc, chunk));
-    child.on('exit', () => this.#onGone(proc));
+    // 'close' comes after stdout is drained, so the final deltas and result are not lost.
+    child.on('close', () => this.#onGone(proc));
     child.on('error', (err) => {
       if (err?.code) console.error(`Desk chat: Claude Code could not run (${err.code}).`);
       this.#onGone(proc);
@@ -188,8 +201,12 @@ export class ChatManager {
         this.#emit({ type: 'text', threadId, text: d.text });
       }
     } else if (msg.type === 'assistant') {
-      turn.modelTurns += 1;
-      if (limitOn(limits, 'modelTurns') && turn.modelTurns > limits.modelTurns) return this.stop('modelTurns');
+      // The CLI may send one assistant event per content block of the same model message.
+      const mid = msg.message?.id;
+      const fresh = typeof mid !== 'string' || !turn.seen.has(mid);
+      if (typeof mid === 'string') turn.seen.add(mid);
+      if (fresh) turn.modelTurns += 1;
+      if (fresh && limitOn(limits, 'modelTurns') && turn.modelTurns > limits.modelTurns) return this.stop('modelTurns');
       const content = Array.isArray(msg.message?.content) ? msg.message.content : [];
       for (const block of content) {
         if (block?.type !== 'tool_use' || typeof block.name !== 'string') continue;
@@ -214,7 +231,7 @@ export class ChatManager {
     if (!turn) return;
     this.#closeProcess(); // detaches the process first, so its exit is not an unexpected stop
     if (turn.text.trim()) this.#save(turn.threadId, { role: 'claude', text: turn.text });
-    this.#save(turn.threadId, { role: 'note', text: reason === 'owner' ? OWNER_STOP : stopMessage(reason, turn.limits) });
+    this.#save(turn.threadId, { role: 'note', tool: 'stop', text: reason === 'owner' ? OWNER_STOP : stopMessage(reason, turn.limits) });
     this.#endTurn();
   }
 
