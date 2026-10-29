@@ -35,6 +35,14 @@ export class Store {
         id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, agent_id TEXT NOT NULL,
         tool TEXT NOT NULL, ok INTEGER NOT NULL, error TEXT);
       CREATE INDEX IF NOT EXISTS calls_agent_at ON calls(agent_id, at);
+      CREATE TABLE IF NOT EXISTS chat_threads (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        cli_session_id TEXT, agent_id TEXT);
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL, at TEXT NOT NULL, role TEXT NOT NULL,
+        text TEXT NOT NULL, tool TEXT, summary TEXT);
+      CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(thread_id, id);
+      CREATE TABLE IF NOT EXISTS chat_settings (name TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
     this.state = initialState();
     this.lastHash = GENESIS;
