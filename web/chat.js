@@ -58,6 +58,8 @@ export function initChat({ api, state, csrf, renewCsrf = async () => {}, onDeskW
   let loadSeq = 0; // only the newest thread load is drawn
   let busy = state()?.chat?.active ?? null; // the thread Claude is replying in, or null
   let sending = false;
+  let endedWhileSending = new Set(); // threads whose reply ended before the send request returned
+  let pickerStale = false; // a refresh came while the chat list was open
   let deskTimer = null;
 
   const deskWrite = () => {
@@ -156,6 +158,9 @@ export function initChat({ api, state, csrf, renewCsrf = async () => {}, onDeskW
   }
 
   function drawPicker() {
+    // Rebuilding the options would close the list the owner has open: redraw when it loses focus.
+    if (document.activeElement === picker) { pickerStale = true; return; }
+    pickerStale = false;
     picker.innerHTML = `<option value="">New chat</option>${threads.map((t) => `<option value="${esc(t.id)}">${esc(shortTitle(t.title))} · ${esc(day(t.updatedAt || t.createdAt))}${t.id === busy ? ' · replying' : ''}</option>`).join('')}`;
     picker.value = threadId ?? '';
   }
@@ -191,6 +196,7 @@ export function initChat({ api, state, csrf, renewCsrf = async () => {}, onDeskW
     }
     if (ev.type === 'step' && ev.write) deskWrite();
     if (ev.type === 'end') {
+      if (sending) endedWhileSending.add(ev.threadId);
       if (busy === ev.threadId) busy = null;
       // The streamed bubbles stay until the reload below draws the stored reply in their place.
       if (ev.threadId === threadId) { log.removeAttribute('aria-busy'); live = null; }
@@ -259,13 +265,15 @@ export function initChat({ api, state, csrf, renewCsrf = async () => {}, onDeskW
     const message = text.value.trim();
     if (!message || sending || busy !== null) return;
     sending = true;
+    endedWhileSending = new Set();
     syncButtons();
     showError('');
     try {
       const out = await api('/api/action/chat.send', { method: 'POST', body: JSON.stringify({ threadId: threadId ?? undefined, text: message }) });
       text.value = '';
       const id = out.result?.threadId ?? threadId;
-      busy = id;
+      // A short reply can end before this request returns; then Send must stay enabled.
+      if (!endedWhileSending.has(id)) busy = id;
       if (id !== threadId) { threadId = id; await loadThreads(); }
       await loadThread();
     } catch (err) {
@@ -282,6 +290,8 @@ export function initChat({ api, state, csrf, renewCsrf = async () => {}, onDeskW
       form.requestSubmit();
     }
   });
+
+  picker.addEventListener('blur', () => { if (pickerStale) drawPicker(); });
 
   picker.addEventListener('change', () => {
     threadId = picker.value || null;

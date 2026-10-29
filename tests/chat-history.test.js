@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../src/store/store.js';
 import {
-  createThread, listThreads, getThread, addMessage, messages, notesSinceReply, chatSetting, setChatSetting,
+  createThread, listThreads, getThread, addMessage, messages, notesSinceOwner, chatSetting, setChatSetting,
 } from '../src/chat/history.js';
 
 const mk = () => {
@@ -40,13 +40,17 @@ test('unknown role is refused', () => {
   assert.throws(() => addMessage(store, t.id, { role: 'system', text: 'x' }), /role/i);
 });
 
-test('notes since reply are the notes after the last Claude message', () => {
+test('notes since owner are the notes after the latest owner message, without stop notices', () => {
   const { store } = mk();
   const t = createThread(store, { title: 't' });
-  for (const [role, text] of [['owner', 'o'], ['note', 'A'], ['claude', 'c'], ['note', 'B'], ['note', 'C']]) {
+  for (const [role, text] of [['note', 'Z'], ['owner', 'o'], ['note', 'A'], ['claude', 'c'], ['note', 'B'], ['owner', 'o2'], ['note', 'C'], ['step', 's'], ['note', 'D']]) {
     addMessage(store, t.id, { role, text });
   }
-  assert.deepEqual(notesSinceReply(store, t.id).map((m) => m.text), ['B', 'C']);
+  addMessage(store, t.id, { role: 'note', tool: 'stop', text: 'stopped' });
+  assert.deepEqual(notesSinceOwner(store, t.id).map((m) => m.text), ['C', 'D']);
+  const empty = createThread(store, { title: 'e' });
+  addMessage(store, empty.id, { role: 'note', text: 'early' });
+  assert.deepEqual(notesSinceOwner(store, empty.id).map((m) => m.text), ['early']);
 });
 
 test('chat history never touches the event log', () => {

@@ -43,6 +43,20 @@ function cut(text) {
   return text.length <= MAX ? text : `${text.slice(0, MAX - 1)}…`;
 }
 
+/** Plain text of a tool_result's content: a string or a list of text blocks. */
+export function resultText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n');
+}
+
+/** Step line for a refused tool call: the first line of the reason, without markup tags. */
+export function refusedLine(text) {
+  const first = String(text ?? '').replace(/<\/?[a-z_]+>/gi, '').split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  const reason = first.length <= MAX ? first : `${first.slice(0, MAX - 1)}…`;
+  return `Refused: ${reason || 'no reason given'}`;
+}
+
 export function stepLine(toolName, input = {}) {
   input = input && typeof input === 'object' ? input : {};
   if (toolName.startsWith(PREFIX)) {

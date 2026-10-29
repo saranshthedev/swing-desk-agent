@@ -68,7 +68,8 @@ desk’s gates: Claude in the chat is just another agent with its own key and ac
    now (other projects remove them); the Correct form stays as it is.
 3. **Correct:** the owner edits as today. Saving a correction posts a line into the current chat,
    for example `You corrected TATAMOTORS · Overview: “[old]” → “[new]”`, and the next message sent
-   to Claude starts with the corrections made since Claude last replied.
+   to Claude starts with the corrections made since the owner’s previous message (including any
+   saved while Claude was still replying).
 4. **History:** saved in the database.
 5. **Approve stays PIN-gated** on the desk; the chat never approves.
 6. **One reply at a time across the whole desk.** Only one Claude session can be open at once, so
@@ -137,7 +138,13 @@ desk’s gates: Claude in the chat is just another agent with its own key and ac
   turn (kill the child process; the next message resumes the session). Sending in a different
   thread closes the current idle process first and starts that thread’s session with `--resume`.
 - Idle conversations: the child process is closed after the idle limit (below) and resumed with
-  `--resume` on the next message. The child process is closed when the server stops.
+  `--resume` on the next message. The child process is closed when the server stops; a reply in
+  progress is kept as far as it got, with an error asking the owner to send again.
+- The session id is saved on the thread only when Claude Code reports it (its `system`/`init`
+  event). A thread without one starts with a fresh `--session-id`, so a start that failed never
+  leaves a session that cannot be resumed.
+- Text from separate model messages (or text blocks) is joined with a blank line, so a stored reply
+  never runs two sentences together.
 
 ### Chat limits
 
@@ -171,9 +178,15 @@ number is kept for when it is switched back on.
   requirement with a different value; flagging a record (reason); rejecting a request (reason).
   Verifying or confirming unchanged is agreement and makes no note. Moving a record to the Trash
   is manual housekeeping and makes no note (owner’s decision).
-- When the owner next sends a message, the server prepends the notes posted since Claude’s last
-  reply, as a short block marked “Owner corrections since your last reply”, before the owner’s
-  text. Claude sees them; the chat shows them as notes, not as owner messages.
+- When the owner next sends a message, the server prepends the notes posted since the owner’s
+  previous message in that thread (stop and limit notices excluded), as a short block marked
+  “Owner corrections since your last reply”, before the owner’s text. Notes saved while Claude is
+  replying are therefore sent with the next message, and notes already sent are never sent twice,
+  even when the turn was stopped. Claude sees them; the chat shows them as notes, not as owner
+  messages.
+- A tool call Claude Code reports as an error gets its own step line, `Refused: <first line of the
+  reason>`. If the desk refused the agent key, the chat also shows one plain error per reply asking
+  the owner to restart Swing Desk or turn chat on again.
 
 ### Storage
 

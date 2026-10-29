@@ -121,13 +121,14 @@ test('a message streams back and is saved', async (tt) => {
   assert.match(s.res.headers.get('content-security-policy'), /default-src 'self'/);
   const threadId = await exchange(t, s, 'Research ABC for me please');
   const text = s.events.filter((e) => e.type === 'text' && e.threadId === threadId).map((e) => e.text).join('');
-  assert.equal(text, 'Research ABC for me ');
+  // The fake CLI answers in two model messages: the echo, a tool call, then "Done.".
+  assert.equal(text, 'Research ABC for me \n\nDone.');
   assert.ok(s.events.some((e) => e.type === 'step' && e.write === true));
   assert.ok(s.events.some((e) => e.type === 'busy' && e.threadId === threadId));
   const { thread, messages } = await t.get(`/api/chat/threads/${threadId}`);
   assert.equal(thread.id, threadId);
   assert.deepEqual(messages.map((m) => m.role), ['owner', 'step', 'claude']);
-  assert.equal(messages[2].text, 'Research ABC for me ');
+  assert.equal(messages[2].text, 'Research ABC for me \n\nDone.');
   const { threads } = await t.get('/api/chat/threads');
   assert.equal(threads[0].id, threadId);
   const missing = await fetch(`${t.base}/api/chat/threads/chat_nope`, { headers: { 'X-CSRF': t.csrf } });

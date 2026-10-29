@@ -48,10 +48,10 @@ export function messages(store, threadId) {
   return store.db.prepare('SELECT * FROM chat_messages WHERE thread_id = ? ORDER BY id').all(threadId).map(message);
 }
 
-/** Notes added after Claude's latest reply. */
-export function notesSinceReply(store, threadId) {
-  return store.db.prepare(`SELECT * FROM chat_messages WHERE thread_id = ? AND role = 'note'
-    AND id > COALESCE((SELECT MAX(id) FROM chat_messages WHERE thread_id = ? AND role = 'claude'), 0) ORDER BY id`)
+/** Corrections for Claude's next message: notes after the owner's latest message, without stop notices. */
+export function notesSinceOwner(store, threadId) {
+  return store.db.prepare(`SELECT * FROM chat_messages WHERE thread_id = ? AND role = 'note' AND (tool IS NULL OR tool <> 'stop')
+    AND id > COALESCE((SELECT MAX(id) FROM chat_messages WHERE thread_id = ? AND role = 'owner'), 0) ORDER BY id`)
     .all(threadId, threadId).map(message);
 }
 

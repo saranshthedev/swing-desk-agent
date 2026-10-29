@@ -200,10 +200,11 @@ test('tool-call and turn limits stop the turn', async (t) => {
 test('idle limit closes the process; next send resumes', async (t) => {
   const { d, chat, calls } = setup(t);
   const { threadId } = chat.send({ text: 'Hi' });
-  const sessionId = getThread(d.store, threadId).cliSessionId;
+  const sessionId = calls[0].args[calls[0].args.indexOf('--session-id') + 1];
   assert.match(sessionId, /^[0-9a-f-]{36}$/);
-  assert.equal(calls[0].args[calls[0].args.indexOf('--session-id') + 1], sessionId);
-  await feed(calls[0].child, result('ok'));
+  assert.equal(getThread(d.store, threadId).cliSessionId, null, 'saved only once Claude Code confirms it');
+  await feed(calls[0].child, { type: 'system', subtype: 'init', session_id: sessionId }, result('ok'));
+  assert.equal(getThread(d.store, threadId).cliSessionId, sessionId);
   mock.timers.tick(10 * MIN - 1);
   assert.equal(calls[0].child.killed, false);
   mock.timers.tick(1);
@@ -278,7 +279,8 @@ test('process exit mid-turn ends the turn with an error', async (t) => {
   assert.equal(events.filter((e) => e.type === 'end').length, 1);
   chat.send({ threadId, text: 'Retry' });
   assert.equal(calls.length, 2);
-  assert.ok(calls[1].args.includes('--resume'));
+  assert.ok(calls[1].args.includes('--session-id'), 'no session was ever confirmed, so none is resumed');
+  assert.ok(!calls[1].args.includes('--resume'));
 });
 
 test('a child error ends the turn without leaking arguments', async (t) => {
@@ -444,4 +446,136 @@ test('a start failure stores a plain error and refuses without the raw error', a
     assert.ok(!JSON.stringify([msgs, events]).includes('mcp-config'));
     assert.throws(() => chat.send({ threadId, text: 'again' }), /stopped unexpectedly/); // refused again, not stuck as busy
   });
+});
+
+test('a correction saved while Claude is replying is sent with the next message', async (t) => {
+  const { d, chat, calls } = setup(t);
+  const { threadId } = chat.send({ text: 'Hi' });
+  await feed(calls[0].child, delta('Look'));
+  addMessage(d.store, threadId, { role: 'note', text: 'You corrected ABC mid-reply' });
+  await feed(calls[0].child, result('ok'));
+  chat.send({ threadId, text: 'Next' });
+  await tick();
+  const sent = calls[0].child.input.map((m) => m.message.content);
+  assert.equal(sent[1], 'Owner corrections since your last reply:\n- You corrected ABC mid-reply\n\nNext');
+});
+
+test('after a stopped turn, corrections already sent are not sent again', async (t) => {
+  const { d, chat, calls } = setup(t);
+  const { threadId } = chat.send({ text: 'Hi' });
+  await feed(calls[0].child, result('ok'));
+  addMessage(d.store, threadId, { role: 'note', text: 'You flagged ABC' });
+  chat.send({ threadId, text: 'Second' });
+  chat.stop(); // no Claude reply stored for this turn
+  chat.send({ threadId, text: 'Third' });
+  await tick();
+  assert.equal(calls[0].child.input.at(-1).message.content, 'Owner corrections since your last reply:\n- You flagged ABC\n\nSecond');
+  assert.equal(calls[1].child.input[0].message.content, 'Third');
+});
+
+test('a failed start does not leave a session to resume', async (t) => {
+  await t.test('child error before init', async (t) => {
+    const { d, chat, calls } = setup(t);
+    const { threadId } = chat.send({ text: 'Hi' });
+    calls[0].child.emit('error', Object.assign(new Error('x'), { code: 'ENOENT' }));
+    assert.equal(getThread(d.store, threadId).cliSessionId, null);
+    chat.send({ threadId, text: 'Again' });
+    assert.ok(calls[1].args.includes('--session-id'));
+    assert.ok(!calls[1].args.includes('--resume'));
+    assert.notEqual(calls[1].args[calls[1].args.indexOf('--session-id') + 1], calls[0].args[calls[0].args.indexOf('--session-id') + 1]);
+  });
+  await t.test('spawn throws', async (t) => {
+    let fail = true;
+    const { d, chat, calls, events } = setup(t, { wrap: (fake) => (...a) => { if (fail) throw new Error('nope'); return fake(...a); } });
+    assert.throws(() => chat.send({ text: 'Hi' }), /stopped unexpectedly/);
+    const threadId = events.find((e) => e.type === 'message').threadId;
+    assert.equal(getThread(d.store, threadId).cliSessionId, null);
+    fail = false;
+    chat.send({ threadId, text: 'Again' });
+    assert.ok(calls[0].args.includes('--session-id'));
+    assert.ok(!calls[0].args.includes('--resume'));
+  });
+  await t.test('init saves the session for later resumes', async (t) => {
+    const { d, chat, calls } = setup(t);
+    const { threadId } = chat.send({ text: 'Hi' });
+    await feed(calls[0].child, { type: 'system', subtype: 'init', session_id: 'from-cli' });
+    calls[0].child.emit('close', 1, null);
+    chat.send({ threadId, text: 'Again' });
+    assert.equal(calls[1].args[calls[1].args.indexOf('--resume') + 1], 'from-cli');
+    assert.equal(getThread(d.store, threadId).cliSessionId, 'from-cli');
+  });
+});
+
+test('text from separate Claude messages is kept apart by a blank line', async (t) => {
+  const { d, chat, calls, events } = setup(t);
+  const { threadId } = chat.send({ text: 'Go' });
+  const ev = (event) => ({ type: 'stream_event', event });
+  const textStart = ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+  await feed(calls[0].child,
+    ev({ type: 'message_start', message: { id: 'msg_1' } }), textStart, delta('Let me look.'),
+    { type: 'assistant', message: { id: 'msg_1', content: [{ type: 'text', text: 'Let me look.' }] } },
+    toolUse(),
+    ev({ type: 'message_start', message: { id: 'msg_2' } }), textStart, delta('Here is'), delta(' the answer.'),
+    { type: 'assistant', message: { id: 'msg_2', content: [{ type: 'text', text: 'Here is the answer.' }] } },
+    result('Here is the answer.'));
+  const reply = messages(d.store, threadId).find((m) => m.role === 'claude');
+  assert.equal(reply.text, 'Let me look.\n\nHere is the answer.');
+  assert.deepEqual(events.filter((e) => e.type === 'text').map((e) => e.text), ['Let me look.', '\n\n', 'Here is', ' the answer.']);
+});
+
+const toolResult = (id, text, isError = true) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content: [{ type: 'text', text }] }] } });
+
+test('a refused tool call is shown as a refused step', async (t) => {
+  const { d, chat, calls, events } = setup(t);
+  const { threadId } = chat.send({ text: 'Propose' });
+  const use = (id, name) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input: { symbol: 'abc' } }] } });
+  await feed(calls[0].child,
+    use('t1', 'mcp__swing-desk__propose_buy'),
+    toolResult('t1', `<tool_use_error>This agent can only draft. Ask the owner to raise access.\nDetails: stack</tool_use_error>`),
+    use('t2', 'mcp__swing-desk__list_lots'),
+    toolResult('t2', 'Lots listed.', false),
+    { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't3', is_error: true, content: 'x'.repeat(300) }] } },
+    result('ok'));
+  const steps = messages(d.store, threadId).filter((m) => m.role === 'step');
+  assert.deepEqual(steps.map((m) => m.tool), ['mcp__swing-desk__propose_buy', 'mcp__swing-desk__propose_buy', 'mcp__swing-desk__list_lots', null]);
+  assert.equal(steps[1].text, 'Refused: This agent can only draft. Ask the owner to raise access.');
+  assert.equal(steps[1].summary, steps[1].text);
+  assert.ok(steps[3].text.startsWith('Refused: xxx'));
+  assert.ok(steps[3].text.length <= 'Refused: '.length + 160);
+  const refused = events.filter((e) => e.type === 'step' && e.message.text.startsWith('Refused:'));
+  assert.equal(refused.length, 2);
+  assert.ok(refused.every((e) => e.write === false));
+  assert.ok(!roles(d, threadId).includes('error'));
+});
+
+test('a refused desk sign-in adds one plain error per turn', async (t) => {
+  const { d, chat, calls, keys } = setup(t);
+  const { threadId } = chat.send({ text: 'Go' });
+  const SIGN_IN = 'Claude could not sign in to the desk. Restart Swing Desk; if it keeps happening, turn chat on again under Agents & MCP.';
+  await feed(calls[0].child,
+    toolUse(), toolResult('t1', `No valid agent key. Got ${keys.at(-1)}`),
+    toolUse(), toolResult('t1', 'No valid agent key.'),
+    result('ok'));
+  const msgs = messages(d.store, threadId);
+  assert.deepEqual(msgs.filter((m) => m.role === 'error').map((m) => m.text), [SIGN_IN]);
+  assert.ok(!JSON.stringify(msgs).includes(keys.at(-1)), 'key never stored');
+  chat.send({ threadId, text: 'Again' });
+  await feed(calls[0].child, toolUse(), toolResult('t1', 'No valid agent key.'), result('ok'));
+  assert.equal(messages(d.store, threadId).filter((m) => m.role === 'error').length, 2, 'once per turn, not once per thread');
+});
+
+test('closing the desk mid-reply keeps the partial reply and says so', async (t) => {
+  const { d, chat, calls, events } = setup(t);
+  const { threadId } = chat.send({ text: 'Go' });
+  await feed(calls[0].child, delta('Half a'), delta(' reply'));
+  chat.close();
+  assert.equal(calls[0].child.killed, true);
+  const msgs = messages(d.store, threadId);
+  assert.deepEqual(msgs.map((m) => m.role), ['owner', 'claude', 'error']);
+  assert.equal(msgs[1].text, 'Half a reply');
+  assert.equal(msgs[2].text, 'The desk stopped while Claude was replying. Send your message again to continue.');
+  assert.equal(chat.status().active, null);
+  assert.equal(events.filter((e) => e.type === 'end').length, 1);
+  chat.close(); // nothing active: no-op
+  assert.equal(messages(d.store, threadId).length, 3);
 });

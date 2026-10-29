@@ -7,16 +7,19 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { UserError } from '../core/settings.js';
-import { addMessage, chatSetting, createThread, getThread, notesSinceReply, setThreadSession } from './history.js';
+import { addMessage, chatSetting, createThread, getThread, notesSinceOwner, setThreadSession } from './history.js';
 import { CHAT_LIMITS, chatLimits, limitOn, stopMessage } from './limits.js';
-import { stepLine } from './steps.js';
+import { refusedLine, resultText, stepLine } from './steps.js';
 import { correctionsBlock } from './notes.js';
 import { CHAT_KEY_ENV, chatAgentStatus, chatArgs, mcpConfigJson, spawnClaude } from './cli.js';
 
 const OWNER_STOP = 'You stopped this reply. Anything Claude already recorded is on the desk.';
 const UNEXPECTED = 'Claude stopped unexpectedly. Send your message again; earlier replies are kept.';
 const FAILED = 'Claude could not finish this reply. Send your message again; earlier replies are kept.';
+const CLOSED = 'The desk stopped while Claude was replying. Send your message again to continue.';
 const MIN = 60_000;
+const PARA = '\n\n';
+const SIGN_IN = 'Claude could not sign in to the desk. Restart Swing Desk; if it keeps happening, turn chat on again under Agents & MCP.';
 
 const defaultTimers = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h) };
 
@@ -34,7 +37,7 @@ export class ChatManager {
   #keyFor = null;
   #listeners = new Set();
   #proc = null; // { child, threadId, buf }
-  #turn = null; // { threadId, text, toolCalls, modelTurns, limits, timer }
+  #turn = null; // { threadId, text, toolCalls, modelTurns, seen, gap, tools, signInError, limits, timer }
   #idle = null;
 
   constructor(store, { bin, dataDir, spawn = spawnClaude, timers = defaultTimers } = {}) {
@@ -105,9 +108,9 @@ export class ChatManager {
     if (!thread) thread = createThread(this.#store, { title: text, agentId: agent.agent.id });
     const id = thread.id;
 
+    // Read before saving this message: corrections are the notes since the owner's previous one.
+    const notes = notesSinceOwner(this.#store, id);
     this.#save(id, { role: 'owner', text });
-    // Stop and limit notices are for the owner, not corrections for Claude.
-    const notes = notesSinceReply(this.#store, id).filter((n) => n.tool !== 'stop');
     const prompt = correctionsBlock(notes) + text;
 
     if (this.#proc && this.#proc.threadId !== id) this.#closeProcess();
@@ -124,7 +127,7 @@ export class ChatManager {
     }
 
     const limits = this.#limits();
-    this.#turn = { threadId: id, text: '', toolCalls: 0, modelTurns: 0, seen: new Set(), limits, timer: null };
+    this.#turn = { threadId: id, text: '', toolCalls: 0, modelTurns: 0, seen: new Set(), gap: false, tools: new Map(), signInError: false, limits, timer: null };
     if (limitOn(limits, 'replyMinutes')) {
       this.#turn.timer = this.#timers.setTimeout(() => this.stop('replyMinutes'), limits.replyMinutes * MIN);
     }
@@ -138,12 +141,10 @@ export class ChatManager {
   }
 
   #start(thread) {
-    let sessionId = thread.cliSessionId;
-    const resume = Boolean(sessionId);
-    if (!resume) {
-      sessionId = randomUUID();
-      setThreadSession(this.#store, thread.id, sessionId);
-    }
+    // A session is saved only when Claude Code reports it (system/init), so a start that fails
+    // before then leaves nothing to resume: the next send starts a fresh session.
+    const resume = Boolean(thread.cliSessionId);
+    const sessionId = resume ? thread.cliSessionId : randomUUID();
     const cwd = join(this.#dataDir, 'chat');
     mkdirSync(cwd, { recursive: true });
     const args = chatArgs({ mcpConfig: mcpConfigJson({ dataDir: this.#dataDir }), sessionId, resume });
@@ -195,8 +196,16 @@ export class ChatManager {
     if (!turn) return;
     const { threadId, limits } = turn;
     if (msg.type === 'stream_event') {
-      const d = msg.event?.delta;
+      const ev = msg.event;
+      // A new model message or text block starts a new paragraph, so replies do not run together.
+      if (ev?.type === 'message_start' || (ev?.type === 'content_block_start' && ev.content_block?.type === 'text')) turn.gap = true;
+      const d = ev?.delta;
       if (d?.type === 'text_delta' && typeof d.text === 'string') {
+        if (turn.gap && turn.text && !turn.text.endsWith(PARA)) {
+          turn.text += PARA;
+          this.#emit({ type: 'text', threadId, text: PARA });
+        }
+        turn.gap = false;
         turn.text += d.text;
         this.#emit({ type: 'text', threadId, text: d.text });
       }
@@ -212,9 +221,25 @@ export class ChatManager {
         if (block?.type !== 'tool_use' || typeof block.name !== 'string') continue;
         turn.toolCalls += 1;
         if (limitOn(limits, 'toolCalls') && turn.toolCalls > limits.toolCalls) return this.stop('toolCalls');
+        if (typeof block.id === 'string') turn.tools.set(block.id, block.name);
         const step = stepLine(block.name, block.input);
         const message = addMessage(this.#store, threadId, { role: 'step', text: step.summary, tool: step.tool, summary: step.summary });
         this.#emit({ type: 'step', threadId, message, write: step.write });
+      }
+    } else if (msg.type === 'user') {
+      // Tool results: a refused call gets its own step line, so the earlier one is not read as done.
+      const content = Array.isArray(msg.message?.content) ? msg.message.content : [];
+      for (const block of content) {
+        if (block?.type !== 'tool_result' || block.is_error !== true) continue;
+        const raw = this.#hideKey(resultText(block.content));
+        const text = refusedLine(raw);
+        const tool = turn.tools.get(block.tool_use_id) ?? null;
+        const message = addMessage(this.#store, threadId, { role: 'step', text, tool, summary: text });
+        this.#emit({ type: 'step', threadId, message, write: false });
+        if (!turn.signInError && raw.includes('No valid agent key')) {
+          turn.signInError = true;
+          this.#save(threadId, { role: 'error', text: SIGN_IN });
+        }
       }
     } else if (msg.type === 'result') {
       const text = turn.text || (!msg.is_error && typeof msg.result === 'string' ? msg.result : '');
@@ -224,6 +249,11 @@ export class ChatManager {
       const idle = this.#limits();
       if (limitOn(idle, 'idleMinutes')) this.#idle = this.#timers.setTimeout(() => { this.#idle = null; this.#closeProcess(); }, idle.idleMinutes * MIN);
     }
+  }
+
+  // Tool output is untrusted text; it must never carry the agent key into history.
+  #hideKey(text) {
+    return this.#key ? text.split(this.#key).join('[hidden]') : text;
   }
 
   stop(reason = 'owner') {
@@ -266,8 +296,10 @@ export class ChatManager {
   }
 
   close() {
+    this.#closeProcess(); // detached first, so its exit is not reported as unexpected
+    // Keeps any partial reply. The store may already be closed at process exit.
+    try { this.#fail(CLOSED); } catch { /* nothing more to save */ }
     if (this.#turn?.timer) this.#timers.clearTimeout(this.#turn.timer);
     this.#turn = null;
-    this.#closeProcess();
   }
 }
