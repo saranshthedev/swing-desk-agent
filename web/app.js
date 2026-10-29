@@ -1704,7 +1704,7 @@ async function onDeskWrite() {
     csrf = (await api('/api/session')).csrf;
     await refresh();
     render();
-    chat = initChat({ api, state: () => S, csrf: () => csrf, onDeskWrite, toast });
+    chat = initChat({ api, state: () => S, csrf: () => csrf, renewCsrf: async () => { csrf = (await api('/api/session')).csrf; }, onDeskWrite, toast });
   } catch (err) {
     main.innerHTML = `<p class="bad">${esc(err.message)}</p>`;
   }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mdBlock, mdInline } from '../web/markdown.js';
-import { pageToMarkdown, chatToMarkdown } from '../web/export-md.js';
+import { pageToMarkdown, chatToMarkdown, shortTitle } from '../web/export-md.js';
 
 test('agent Markdown renders headings, lists, tables, quotes, code and links', () => {
   const html = mdBlock([
@@ -114,4 +114,12 @@ test('chat export lists who said what', () => {
     '> Note: Stopped by you.', '> Send continue to carry on.', '',
     '> Error: Claude Code closed.', '',
   ].join('\n'));
+});
+
+test('chat titles keep their first line, at most 80 characters', () => {
+  const long = 'x'.repeat(120);
+  assert.equal(shortTitle('Check SAMPLE results\nand the promoter pledge'), 'Check SAMPLE results');
+  assert.equal(shortTitle(long), 'x'.repeat(80));
+  assert.equal(shortTitle(''), 'Chat');
+  assert.equal(chatToMarkdown({ title: `${long}\nsecond line` }, [], { at: 'now' }), `*Exported from Swing Desk on now*\n\n# ${'x'.repeat(80)}\n`);
 });

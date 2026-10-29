@@ -116,9 +116,15 @@ export function pageToMarkdown(root, { title = 'Swing Desk', at = '' } = {}) {
 
 const quoted = (label, text) => String(text ?? '').trim().split('\n').map((l, n) => `> ${n ? '' : `${label}: `}${l}`.trimEnd()).join('\n');
 
+/** A chat title for a heading or a menu: its first line, at most 80 characters. */
+export function shortTitle(title) {
+  const first = String(title ?? '').trim().split('\n')[0].trim();
+  return first.slice(0, 80).trimEnd() || 'Chat';
+}
+
 /** One chat thread as Markdown: who said what, Claude's steps as italic list lines, notes and errors quoted. */
 export function chatToMarkdown(thread, messages, { at = '' } = {}) {
-  const parts = [`*Exported from Swing Desk${at ? ` on ${at}` : ''}*`, `# ${thread?.title || 'Chat'}`];
+  const parts = [`*Exported from Swing Desk${at ? ` on ${at}` : ''}*`, `# ${shortTitle(thread?.title)}`];
   for (const m of messages ?? []) {
     const text = String(m.text ?? '').trim();
     if (m.role === 'owner') parts.push(`**You:** ${text}`);
