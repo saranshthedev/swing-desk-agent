@@ -21,7 +21,12 @@ import { deskRecommendation, latestRecommendation } from '../core/prepare.js';
 import { indiaDate } from '../core/time.js';
 import { RISK_PRESETS, AGENT_PRESETS, PLAYBOOK_TEMPLATES, PLAN_DEFAULTS, matchRiskPreset } from '../core/presets.js';
 import { newId } from '../store/store.js';
-import { backupDir } from '../config.js';
+import { backupDir, dataDir } from '../config.js';
+import { findClaude } from '../connect.js';
+import { ChatManager } from '../chat/manager.js';
+import { listThreads, getThread, messages, setChatSetting } from '../chat/history.js';
+import { chatLimits } from '../chat/limits.js';
+import { syncOverruleNotes } from '../chat/notes.js';
 import { API_VERSION, codeChangedSinceStart } from '../version.js';
 import { SECTIONS, EXCHANGE_SECTIONS, parseSection, formatSection, deriveSection, liveSections } from '../core/sections.js';
 
@@ -35,7 +40,7 @@ const HEADERS = {
   'Cache-Control': 'no-store',
 };
 
-/** Owner actions: [needsPin, handler(store, body) → result]. */
+/** Owner actions: [needsPin, handler(store, body, chat) → result]. */
 const owner = (fn) => (store, body) => store.run('owner', (s, ctx) => fn(s, body, ctx));
 const ACTIONS = {
   'settings.change': [true, owner(C.changeSettings)],
@@ -48,7 +53,23 @@ const ACTIONS = {
   'agent.update': [true, owner(C.updateAgent)],
   'agent.rekey': [true, (store, body) => {
     if (!store.read((s) => s.agents[body.id])) throw new UserError('That agent does not exist.');
+    if (body.id === store.secret('chat_agent')) throw new UserError('The desk replaces the chat agent’s key itself. Turn chat on again to make a new one.');
     return { id: body.id, key: store.issueKey(body.id) };
+  }],
+  // The chat agent's key is never returned: the desk keeps it in memory for the Claude Code it starts.
+  'chat.enable': [true, (store, body, chat) => {
+    const input = { name: 'Desk chat', client: 'Desk chat (built in)', scope: body.scope ?? 'propose', expiresDays: body.expiresDays ?? 365 };
+    const { id } = store.run('owner', (s, ctx) => C.addAgent(s, input, ctx));
+    store.setSecret('chat_agent', id);
+    chat.rekey();
+    return { id };
+  }],
+  'chat.send': [false, (store, body, chat) => chat.send({ threadId: body.threadId, text: body.text })],
+  'chat.stop': [false, (store, body, chat) => { chat.stop('owner'); return { ok: true }; }],
+  'chat.limits': [false, (store, body) => {
+    const limits = chatLimits(body.limits ?? {});
+    setChatSetting(store, 'limits', limits);
+    return limits;
   }],
   'strategy.save': [true, owner(C.saveStrategy)],
   'prepare.mark': [false, owner(C.markPrepared)],
@@ -118,9 +139,11 @@ const ACTIONS = {
 
 const HISTORY_LIMIT = 20;
 
-export function stateView(store) {
+export function stateView(store, chat) {
+  const chatStatus = chat?.status();
   return store.read((s, now) => ({
     now,
+    ...(chatStatus ? { chat: chatStatus } : {}),
     status: deskStatus(s, now),
     pinSet: store.hasPin(),
     strategies: Object.values(s.strategies).filter(live),
@@ -160,7 +183,7 @@ export function stateView(store) {
   }));
 }
 
-export function createApp(store, { port }) {
+export function createApp(store, { port, chat = new ChatManager(store, { bin: null, dataDir: '' }) }) {
   const csrf = randomBytes(24).toString('base64url');
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const origins = new Set([...hosts].map((h) => `http://${h}`));
@@ -168,6 +191,29 @@ export function createApp(store, { port }) {
   const send = (res, status, body, type = 'application/json; charset=utf-8') => {
     res.writeHead(status, { ...HEADERS, 'Content-Type': type });
     res.end(type.startsWith('application/json') ? JSON.stringify(body) : body);
+  };
+
+  // Tells Claude in the chat when the owner overrules an agent. Never fails the owner's action.
+  const syncNotes = () => {
+    try {
+      for (const message of syncOverruleNotes(store)) chat.notify(message);
+    } catch {
+      console.error('Desk chat: could not post owner corrections to the chat.');
+    }
+  };
+  syncNotes(); // the first call only marks the present
+
+  // Desk-wide live chat events. The page reads this with fetch, since EventSource cannot send X-CSRF.
+  const stream = (req, res) => {
+    res.writeHead(200, { ...HEADERS, 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive' });
+    res.flushHeaders();
+    const write = (text) => { if (!res.writableEnded && !res.destroyed) res.write(text); };
+    write(': connected\n\n');
+    const off = chat.on((event) => write(`data: ${JSON.stringify(event)}\n\n`));
+    const ping = setInterval(() => write(': ping\n\n'), 25_000);
+    const done = () => { off(); clearInterval(ping); };
+    req.on('close', done);
+    res.on('close', done);
   };
 
   return async function handler(req, res) {
@@ -191,7 +237,14 @@ export function createApp(store, { port }) {
       }
       if (req.headers['x-csrf'] !== csrf) return send(res, 403, { error: 'Reload the page and try again.' });
 
-      if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, stateView(store));
+      if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, stateView(store, chat));
+      if (req.method === 'GET' && url.pathname === '/api/chat/stream') return stream(req, res);
+      if (req.method === 'GET' && url.pathname === '/api/chat/threads') return send(res, 200, { threads: listThreads(store) });
+      if (req.method === 'GET' && url.pathname.startsWith('/api/chat/threads/')) {
+        const thread = getThread(store, url.pathname.slice(18));
+        if (!thread) return send(res, 404, { error: 'That chat was not found.' });
+        return send(res, 200, { thread, messages: messages(store, thread.id) });
+      }
       if (req.method === 'GET' && url.pathname === '/api/ledger') {
         const before = Number(url.searchParams.get('before')) || undefined;
         // Purged items stay in the log (the chain must still check out) but their contents are not shown.
@@ -211,7 +264,9 @@ export function createApp(store, { port }) {
         store.checkPin(body.pin);
         delete body.pin;
       }
-      return send(res, 200, { ok: true, result: run(store, body) ?? null });
+      const result = run(store, body, chat) ?? null;
+      syncNotes();
+      return send(res, 200, { ok: true, result });
     } catch (err) {
       if (err instanceof UserError) return send(res, 400, { error: err.message });
       console.error(err);
@@ -245,7 +300,9 @@ function readJson(req) {
 }
 
 export function startServer(store, { port }) {
-  const server = createServer(createApp(store, { port }));
+  const chat = new ChatManager(store, { bin: findClaude(), dataDir: dataDir() });
+  chat.rekey();
+  const server = createServer(createApp(store, { port, chat }));
   const tick = () => {
     try {
       store.run('system', (s, ctx) => ({ events: scheduleTick(s, ctx.now, newId) }));
@@ -255,10 +312,11 @@ export function startServer(store, { port }) {
   };
   tick();
   const timer = setInterval(tick, 30_000);
-  server.on('close', () => clearInterval(timer));
+  server.on('close', () => { clearInterval(timer); chat.close(); });
   return new Promise((ok, fail) => {
     server.once('error', (err) => {
       clearInterval(timer);
+      chat.close();
       if (err.code !== 'EADDRINUSE') return fail(err);
       const busy = new UserError(`Port ${port} is already in use. Swing Desk may already be running in another window: open http://127.0.0.1:${port}. Or stop the other one with Ctrl + C.`);
       busy.code = 'PORT_IN_USE';
