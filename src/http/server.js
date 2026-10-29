@@ -58,8 +58,17 @@ const ACTIONS = {
   }],
   // The chat agent's key is never returned: the desk keeps it in memory for the Claude Code it starts.
   'chat.enable': [true, (store, body, chat) => {
-    const input = { name: 'Desk chat', client: 'Desk chat (built in)', scope: body.scope ?? 'propose', expiresDays: body.expiresDays ?? 365 };
-    const { id } = store.run('owner', (s, ctx) => C.addAgent(s, input, ctx));
+    const scope = body.scope ?? 'propose';
+    if (!['read', 'draft', 'propose'].includes(scope)) throw new UserError('Choose Read, Draft or Propose for the chat.');
+    const input = { name: 'Desk chat', client: 'Desk chat (built in)', scope, expiresDays: body.expiresDays ?? 365 };
+    // One chat agent at a time: the old one is disconnected in the same step that adds the new one.
+    const oldId = store.secret('chat_agent');
+    const { id } = store.run('owner', (s, ctx) => {
+      const old = oldId ? s.agents[oldId] : null;
+      const revoke = old && !old.revoked ? C.updateAgent(s, { id: old.id, revoked: true }, ctx).events : [];
+      const added = C.addAgent(s, input, ctx);
+      return { events: [...revoke, ...added.events], result: added.result };
+    });
     store.setSecret('chat_agent', id);
     chat.rekey();
     return { id };
@@ -312,11 +321,17 @@ export function startServer(store, { port }) {
   };
   tick();
   const timer = setInterval(tick, 30_000);
-  server.on('close', () => { clearInterval(timer); chat.close(); });
+  // Claude Code must not outlive the desk, even while a page holds the chat stream open.
+  const closeChat = () => chat.close();
+  process.once('exit', closeChat);
+  const close = server.close.bind(server);
+  server.close = (cb) => { server.closeAllConnections?.(); return close(cb); };
+  server.on('close', () => { clearInterval(timer); chat.close(); process.off('exit', closeChat); });
   return new Promise((ok, fail) => {
     server.once('error', (err) => {
       clearInterval(timer);
       chat.close();
+      process.off('exit', closeChat);
       if (err.code !== 'EADDRINUSE') return fail(err);
       const busy = new UserError(`Port ${port} is already in use. Swing Desk may already be running in another window: open http://127.0.0.1:${port}. Or stop the other one with Ctrl + C.`);
       busy.code = 'PORT_IN_USE';

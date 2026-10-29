@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApp } from '../src/http/server.js';
+import { createApp, startServer } from '../src/http/server.js';
 import { ChatManager } from '../src/chat/manager.js';
 import { createThread } from '../src/chat/history.js';
 import { desk } from './helpers.js';
@@ -144,6 +144,7 @@ test('stop ends a hanging reply', async (tt) => {
   const t = await serve(tt);
   await enable(t);
   const s = await t.stream();
+  // Works because the manager spawns the fixture with { ...process.env }, so the child inherits this.
   process.env.FAKE_CLAUDE_HANG = '1';
   tt.after(() => { delete process.env.FAKE_CLAUDE_HANG; });
   const { threadId } = (await (await t.post('chat.send', { text: 'Wait for me' })).json()).result;
@@ -211,6 +212,57 @@ test('corrections from before the server started are skipped; the first owner ac
   assert.equal(notes.length, 1);
   assert.match(notes[0].text, /ABC/);
   assert.doesNotMatch(notes[0].text, /before start/);
+});
+
+test('turning chat on again disconnects the old chat agent', async (tt) => {
+  const t = await serve(tt);
+  const first = await enable(t);
+  const second = await enable(t);
+  assert.notEqual(first.id, second.id);
+  const chats = (await t.get('/api/state')).agents.filter((a) => a.name === 'Desk chat');
+  assert.deepEqual(chats.filter((a) => !a.revoked).map((a) => a.id), [second.id]);
+  assert.equal(chats.find((a) => a.id === first.id).revoked, true);
+  assert.equal(t.d.store.secret('chat_agent'), second.id);
+  assert.equal((await t.get('/api/state')).chat.agent.id, second.id);
+});
+
+test('chat scope must be read, draft or propose', async (tt) => {
+  const t = await serve(tt);
+  for (const scope of ['off', 'admin', '']) {
+    const res = await t.post('chat.enable', { pin: PIN, scope });
+    assert.equal(res.status, 400, scope);
+    assert.equal((await res.json()).error, 'Choose Read, Draft or Propose for the chat.');
+  }
+  assert.equal(t.d.store.secret('chat_agent'), null);
+  const { id } = (await (await t.post('chat.enable', { pin: PIN, scope: 'draft' })).json()).result;
+  assert.equal((await t.get('/api/state')).agents.find((a) => a.id === id).scope, 'draft');
+});
+
+test('closing the desk server ends open chat streams and removes its exit hook', async (tt) => {
+  const dir = mkdtempSync(join(tmpdir(), 'chat-start-'));
+  const saved = { bin: process.env.DESK_CLAUDE_BIN, data: process.env.SWING_DESK_DATA };
+  process.env.DESK_CLAUDE_BIN = FAKE;
+  process.env.SWING_DESK_DATA = dir;
+  tt.after(() => {
+    for (const [k, v] of [['DESK_CLAUDE_BIN', saved.bin], ['SWING_DESK_DATA', saved.data]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const probe = createServer();
+  await new Promise((ok) => probe.listen(0, '127.0.0.1', ok));
+  const port = probe.address().port;
+  await new Promise((ok) => probe.close(ok));
+  const d = desk();
+  const exitsBefore = process.listenerCount('exit');
+  const server = await startServer(d.store, { port });
+  assert.equal(process.listenerCount('exit'), exitsBefore + 1);
+  const base = `http://127.0.0.1:${port}`;
+  const csrf = (await (await fetch(`${base}/api/session`)).json()).csrf;
+  const res = await fetch(`${base}/api/chat/stream`, { headers: { 'X-CSRF': csrf } });
+  assert.equal(res.status, 200);
+  const reading = (async () => { try { for await (const _ of res.body); } catch { /* cut off */ } })();
+  await new Promise((ok) => server.close(ok)); // would hang if the stream kept the server open
+  await reading;
+  assert.equal(process.listenerCount('exit'), exitsBefore);
 });
 
 test('chat limits save and validate', async (tt) => {
