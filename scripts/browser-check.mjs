@@ -578,10 +578,14 @@ try {
     return document.querySelector('#chat-send').disabled;
   })()`);
   assert.equal(sendingDisabled, true, 'Send is disabled while Claude replies');
-  await until(async () => (await chatText('#chat-log')).includes(question.slice(0, 20)), 'Claude reply text in the chat', 20_000);
+  // The echo must be inside a Claude bubble (not the owner's own message).
+  const echo = question.slice(0, 20);
+  await until(() => js(`[...document.querySelectorAll('#chat-log .chat-claude .md')].some((e) => e.textContent.includes(${JSON.stringify(echo)}))`), `Claude reply containing "${echo}" in a Claude bubble`, 20_000);
   await until(() => js('!!document.querySelector("#chat-log .chat-step")'), 'a step line in the chat', 20_000);
   await until(() => js('!document.querySelector("#chat-send").disabled && document.querySelector("#chat-stop").hidden'), 'Send enabled after the reply', 20_000);
   assert.match(await chatText('#chat-log'), /You\s+How is the market today\?/);
+  // Once the turn ends the reply is the stored one (it carries a time stamp; a streaming bubble does not).
+  await until(() => js(`[...document.querySelectorAll('#chat-log .chat-claude[title] .md')].some((e) => e.textContent.includes(${JSON.stringify(echo)}))`), 'the stored Claude reply (not a live streaming bubble) after the turn ends', 20_000);
   assert.equal(await js('document.querySelector("#chat-text").value'), '', 'composer cleared after sending');
   assert.ok(await js('!!document.querySelector("[data-chat=export]")'), 'Export chat button');
   // The page's own Markdown export never carries the chat.
