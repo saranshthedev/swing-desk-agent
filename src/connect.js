@@ -34,12 +34,16 @@ export function findClaude() {
   return null;
 }
 
+/** One command line for a .cmd/.bat shim: every argument quoted, inner quotes doubled. */
+export function shellLine(claude, args) {
+  // Node runs this as cmd /d /s /c "<line>"; /s strips only that outer pair, keeping our quotes.
+  return [claude, ...args].map((a) => `"${a.replace(/"/g, '""')}"`).join(' ');
+}
+
 export function runClaude(claude, args) {
   // .cmd/.bat shims (npm global installs) need a shell on Windows; quote every argument then.
   if (/\.(cmd|bat)$/i.test(claude)) {
-    // Node runs this as cmd /d /s /c "<line>"; /s strips only that outer pair, keeping our quotes.
-    const line = [claude, ...args].map((a) => `"${a.replace(/"/g, '""')}"`).join(' ');
-    return spawnSync(line, { encoding: 'utf8', shell: true, windowsHide: true });
+    return spawnSync(shellLine(claude, args), { encoding: 'utf8', shell: true, windowsHide: true });
   }
   return spawnSync(claude, args, { encoding: 'utf8', windowsHide: true });
 }
