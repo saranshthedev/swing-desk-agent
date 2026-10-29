@@ -34,7 +34,7 @@ export function findClaude() {
   return null;
 }
 
-/** One command line for a .cmd/.bat shim: every argument quoted, inner quotes doubled. */
+/** One command line for a .cmd/.bat shim: every argument quoted, inner quotes doubled. cmd still expands %VAR% inside quotes, so prefer claude.exe. */
 export function shellLine(claude, args) {
   // Node runs this as cmd /d /s /c "<line>"; /s strips only that outer pair, keeping our quotes.
   return [claude, ...args].map((a) => `"${a.replace(/"/g, '""')}"`).join(' ');

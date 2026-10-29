@@ -1,5 +1,5 @@
 // Locked-down Claude Code command line for the desk chat. The agent key goes only into the
-// --mcp-config JSON (server env). Never log these arguments.
+// environment passed to spawnClaude. Never log these arguments.
 
 import { spawn } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
@@ -12,13 +12,17 @@ const BIN = resolve(dirname(fileURLToPath(import.meta.url)), '../../bin/desk.js'
 // One line only: .cmd quoting stays safe.
 export const CHAT_RULES = 'You are inside Swing Desk. The owner approves on the desk, never in the chat. Record only through the swing-desk tools. Follow the research rule from the MCP server instructions. Use plain language, rupees and India time. Say where on the desk anything you recorded is.';
 
-export function mcpConfigJson({ key, dataDir }) {
+export const CHAT_KEY_ENV = 'SWING_DESK_AGENT_KEY';
+
+// The key stays out of argv (visible to other processes) and out of any file on disk: the config
+// holds only a placeholder that Claude Code expands from the environment spawnClaude passes in.
+export function mcpConfigJson({ dataDir }) {
   return JSON.stringify({
     mcpServers: {
       'swing-desk': {
         command: process.execPath,
         args: [BIN, 'mcp'],
-        env: { SWING_DESK_AGENT_KEY: key, SWING_DESK_DATA: dataDir },
+        env: { [CHAT_KEY_ENV]: '${' + CHAT_KEY_ENV + '}', SWING_DESK_DATA: dataDir },
       },
     },
   });
@@ -36,8 +40,9 @@ export function chatArgs({ mcpConfig, sessionId, resume }) {
   ];
 }
 
-export function spawnClaude(bin, args, { cwd } = {}) {
-  const opts = { cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true };
+// Node child-process errors carry the full argv in err.spawnargs: callers must never log the raw error.
+export function spawnClaude(bin, args, { cwd, env } = {}) {
+  const opts = { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true };
   if (/\.(cmd|bat)$/i.test(bin)) return spawn(shellLine(bin, args), { ...opts, shell: true });
   if (/\.(m?js)$/i.test(bin)) return spawn(process.execPath, [bin, ...args], opts);
   return spawn(bin, args, opts);

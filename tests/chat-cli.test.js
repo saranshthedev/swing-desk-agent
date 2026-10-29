@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chatArgs, mcpConfigJson, CHAT_RULES, chatAgentStatus } from '../src/chat/cli.js';
+import { chatArgs, mcpConfigJson, CHAT_RULES, chatAgentStatus, CHAT_KEY_ENV } from '../src/chat/cli.js';
 import { shellLine } from '../src/connect.js';
 import * as C from '../src/core/commands.js';
 import { desk } from './helpers.js';
@@ -20,13 +20,14 @@ test('chat arguments allow only the desk and web tools', () => {
   assert.ok(!again.includes('--session-id'));
 });
 
-test('the MCP config carries the key only in the server env', () => {
-  const cfg = JSON.parse(mcpConfigJson({ key: 'sdk_x', dataDir: '/d' }));
+test('the MCP config holds a placeholder, never a real key', () => {
+  const json = mcpConfigJson({ dataDir: '/d' });
+  const cfg = JSON.parse(json);
   assert.deepEqual(Object.keys(cfg.mcpServers), ['swing-desk']);
-  assert.equal(cfg.mcpServers['swing-desk'].env.SWING_DESK_AGENT_KEY, 'sdk_x');
+  assert.equal(cfg.mcpServers['swing-desk'].env[CHAT_KEY_ENV], '${SWING_DESK_AGENT_KEY}');
   assert.equal(cfg.mcpServers['swing-desk'].env.SWING_DESK_DATA, '/d');
-  const args = chatArgs({ mcpConfig: mcpConfigJson({ key: 'sdk_x', dataDir: '/d' }), sessionId: 's', resume: false });
-  assert.equal(args.filter((a) => a.includes('sdk_x')).length, 1);
+  const args = chatArgs({ mcpConfig: json, sessionId: 's', resume: false });
+  assert.ok(!args.some((a) => a.startsWith('sdk_') || a.includes('sdk_')));
 });
 
 test('chat rules are a single line', () => {
