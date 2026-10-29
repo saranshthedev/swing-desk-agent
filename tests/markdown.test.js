@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mdBlock, mdInline } from '../web/markdown.js';
-import { pageToMarkdown } from '../web/export-md.js';
+import { pageToMarkdown, chatToMarkdown } from '../web/export-md.js';
 
 test('agent Markdown renders headings, lists, tables, quotes, code and links', () => {
   const html = mdBlock([
@@ -93,5 +93,25 @@ test('export turns the page into Markdown and leaves out controls', () => {
     '**On trading day: 3 checks**', '',
     'Shown even when folded', '',
     'Calm and not chasing', '',
+  ].join('\n'));
+});
+
+test('chat export lists who said what', () => {
+  const thread = { id: 't1', title: 'Market today' };
+  const messages = [
+    { role: 'owner', text: 'How is the market?' },
+    { role: 'step', tool: 'desk_status', summary: 'Read the desk status' },
+    { role: 'claude', text: '## Summary\nNifty is **flat**.' },
+    { role: 'note', tool: 'stop', text: 'Stopped by you.\nSend continue to carry on.' },
+    { role: 'error', text: 'Claude Code closed.' },
+  ];
+  assert.equal(chatToMarkdown(thread, messages, { at: '29 Oct, 10:00 am IST' }), [
+    '*Exported from Swing Desk on 29 Oct, 10:00 am IST*', '',
+    '# Market today', '',
+    '**You:** How is the market?', '',
+    '- *Read the desk status*', '',
+    '**Claude:**', '', '## Summary', 'Nifty is **flat**.', '',
+    '> Note: Stopped by you.', '> Send continue to carry on.', '',
+    '> Error: Claude Code closed.', '',
   ].join('\n'));
 });

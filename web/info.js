@@ -143,5 +143,12 @@ export const INFO_IN = {
   reject: { reason: 'Optional. Why you said no, so you and the AI can learn.' },
   playbook: { name: 'A short name for this job, for example “Morning news check”.' },
   strategy: { name: 'A name you will recognise, for example “My breakout”.', id: 'A short code name: small letters, numbers and dashes, for example my-breakout. It cannot change later.' },
+  'chat-enable': { scope: 'What Claude in the chat may do on the desk. Read: only look. Draft: also save research (marked not verified). Propose: also send trade ideas for you to approve.' },
+  'chat-limits': {
+    replyMinutes: 'The longest one reply may run. Example: 15 minutes. When it is reached the reply stops; send “continue” to carry on.',
+    toolCalls: 'The most desk tools Claude may use in one reply, for example reading a stock or saving a note. Stops runaway loops. Example: 60.',
+    modelTurns: 'How many times Claude may think and act again within one reply. Example: 40. Untick On for no limit.',
+    idleMinutes: 'Claude Code closes after this many quiet minutes to save your computer’s memory. The chat history stays; your next message opens it again.',
+  },
   'agent-update': { scope: 'Change what this AI may do. Read: only look. Draft: also save research. Propose: also send trade ideas.' },
 };

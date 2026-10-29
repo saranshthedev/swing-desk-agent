@@ -5,12 +5,14 @@ import { checklistHtml, libraryHtml, strategyItemsHtml, toStrategyItem, groupNam
 import { sectionBody, warningsHtml } from './sections-ui.js';
 import { mdBlock, mdInline } from './markdown.js';
 import { pageToMarkdown } from './export-md.js';
+import { initChat } from './chat.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const main = $('#main');
 let csrf = '';
 let S = null; // latest /api/state
 let ledgerCache = null;
+let chat = null; // the docked chat panel, drawn once after the first render
 const drafts = {}; // unsaved editor state (strategies, playbooks)
 
 // ---------- formatting ----------
@@ -94,6 +96,7 @@ async function refresh() {
   S.recommendations ??= [];
   ledgerCache = null;
   for (const c of [...Object.values(prepCache), ...Object.values(snapCache)]) c.stale = true;
+  chat?.update();
 }
 
 function toast(message, bad = false) {
@@ -493,6 +496,7 @@ const pages = {
       ${shown ? `<section class="card highlight"><h2>Key for ${esc(shown.name)} — shown once</h2><p>Add this to the model app’s MCP settings. Anyone with this key can act as this agent.</p><pre class="code">${esc(JSON.stringify({ mcpServers: { 'swing-desk': { ...S.meta.mcp, env: { ...(S.meta.mcp.env || {}), SWING_DESK_AGENT_KEY: shown.key } } } }, null, 2))}</pre><button class="btn" data-action="hide-key">I have saved it</button></section>` : ''}
       <section class="card"><h2>Connections</h2>${live.length ? `<ul class="agent-list">${live.map(agentRow).join('')}</ul>` : '<p class="muted">No connected agents. Add one below.</p>'}
         ${gone.length ? (({ items, nav }) => `<details class="agent-gone"><summary>Disconnected agents (${gone.length})</summary><ul class="rows">${items.map((a) => `<li><div><b>${esc(a.name)}</b> <span class="tag tag-bad">disconnected</span><div class="small muted">${esc(a.client)} · its past calls and requests stay in the ledger</div></div>${trashBtn('agent', a.id, `agent ${a.name}`)}</li>`).join('')}</ul>${nav}</details>`)(paged('agents-gone', gone)) : ''}</section>
+      ${chatCards()}
       <form class="card form" data-form="agent-add"><h2>Add an agent</h2>
         ${field('Start from', `<select name="agentPreset">${options([...Object.entries(S.meta.presets.agents).map(([k, p]) => [k, `${p.label} – ${p.about}`]), ['custom', 'Custom – choose everything yourself']], 'researcher')}</select>`)}
         <div class="grid">${field('Name', '<input name="name" required placeholder="Claude research">')}${field('App', '<input name="client" placeholder="Claude Code">')}
@@ -980,24 +984,50 @@ document.addEventListener('toggle', (e) => {
 // ---------- agent limits: a number plus an On switch each; a switched-off limit is not enforced ----------
 const LIMITS = [['intentsPerDay', 'Requests per day', 'requests/day'], ['writesPerDay', 'Writes per day', 'writes/day'], ['callsPerHour', 'Calls per hour', 'calls/hour']];
 const limitOn = (limits, k) => !limits.off?.includes(k);
-function limitFields(limits) {
-  return LIMITS.map(([k, label]) => field(label, `${num(k, limits[k], 'step="1" min="0"')}<label class="check inline"><input type="checkbox" name="${k}On" ${limitOn(limits, k) ? 'checked' : ''}> <span>On</span></label>`, limitOn(limits, k) ? '' : 'Off: no limit.')).join('');
+function limitFields(limits, list = LIMITS) {
+  return list.map(([k, label, , attrs = 'step="1" min="0"']) => field(label, `${num(k, limits[k], attrs)}<label class="check inline"><input type="checkbox" name="${k}On" ${limitOn(limits, k) ? 'checked' : ''}> <span>On</span></label>`, limitOn(limits, k) ? '' : 'Off: no limit.')).join('');
 }
 /** Form data → { …numbers, off: [switched-off limits] } for agent.add and agent.update. */
-function limitsFrom(data) {
-  return { ...Object.fromEntries(LIMITS.map(([k]) => [k, data[k]])), off: LIMITS.map(([k]) => k).filter((k) => data[`${k}On`] === false) };
+function limitsFrom(data, list = LIMITS) {
+  return { ...Object.fromEntries(list.map(([k]) => [k, data[k]])), off: list.map(([k]) => k).filter((k) => data[`${k}On`] === false) };
 }
+/** The chat's limits in the same [key, label, unit, attrs] shape, from the server's rules. */
+const chatLimitList = () => Object.entries(S.chat.limitRules).map(([k, r]) => [k, esc(r.label), r.unit, `step="1" min="${r.min}" max="${r.max}"`]);
 const limitsText = (limits) => LIMITS.map(([k, , unit]) => (limitOn(limits, k) ? `${limits[k]} ${unit}` : `no limit on ${unit}`)).join(' · ');
+
+/** Desk chat on the Agents page: turn it on, see how it stands, set its limits. */
+function chatCards() {
+  const c = S.chat;
+  if (!c) return '';
+  const status = !c.cli
+    ? '<p class="bad">Claude Code is not installed on this computer. Install it and sign in once, then restart Swing Desk. The chat panel uses it.</p>'
+    : '';
+  const on = c.agent.ok
+    ? `<p>Chat is <b>on</b> with <b>${esc(c.agent.scope)}</b> access${c.agent.paused ? '. Agents are paused: Claude can talk but cannot use the desk.' : '.'} It shows under Connections as “${esc(c.agent.name)}”: change its access or disconnect it there.</p>`
+    : `<p class="muted">${esc(c.agent.reason)}</p>
+      <form class="form" data-form="chat-enable">
+        ${field('Access', `<select name="scope">${options(['read', 'draft', 'propose'].map((s) => [s, s]), 'propose')}</select>`)}
+        <ul class="small muted">${['read', 'draft', 'propose'].map((k) => `<li><b>${k}</b>: ${SCOPE_HELP[k]}</li>`).join('')}</ul>
+        ${pinField()}<button class="btn primary">Turn on chat</button></form>`;
+  return `<section class="card"><h2>Desk chat</h2>
+      <p class="small muted">The chat on the right of every page runs Claude Code on this computer with its own desk connection. Its key stays inside the desk; you never see or copy it. Claude still cannot approve or place orders.</p>
+      ${status}${on}</section>
+    <form class="card form" data-form="chat-limits"><h2>Chat limits</h2>
+      <p class="small muted">A reply stops when it reaches a limit that is on. Anything Claude already recorded stays on the desk. No PIN needed.</p>
+      <div class="grid">${limitFields(c.limits, chatLimitList())}</div>
+      <button class="btn primary">Save chat limits</button></form>`;
+}
 
 function agentRow(a) {
   const u = a.usage[S.status.today] ?? { writes: 0, intents: 0 };
+  const isChatAgent = a.id === S.chat?.agent?.id;
   return `<li class="agent">
     <div class="agent-head"><div><b>${esc(a.name)}</b> <span class="tag scope-${a.scope}">${a.scope}</span><div class="small muted">${esc(a.client)}</div></div>
       <dl class="agent-facts"><div><dt>Limits</dt><dd>${esc(limitsText(a.limits))}</dd></div><div><dt>Used today</dt><dd>${u.intents} requests · ${u.writes} writes</dd></div><div><dt>Key expires</dt><dd>${when(a.expiresAt)}</dd></div></dl></div>
     <div class="agent-tools">
       <details><summary class="btn">Change access or limits</summary><form class="form" data-form="agent-update"><input type="hidden" name="id" value="${esc(a.id)}">
         <div class="grid">${field('Access', `<select name="scope">${options(['off', 'read', 'draft', 'propose'].map((s) => [s, s]), a.scope)}</select>`)}${limitFields(a.limits)}</div>
-        ${pinField()}<div class="actions"><button class="btn primary">Save changes</button><button class="btn" name="rekey" value="1">Replace key</button></div><p class="small muted">Replace key: the old key stops working and a new one is shown once.</p></form></details>
+        ${pinField()}<div class="actions"><button class="btn primary">Save changes</button>${isChatAgent ? '' : '<button class="btn" name="rekey" value="1">Replace key</button>'}</div><p class="small muted">${isChatAgent ? 'This is the desk chat’s connection. To give it a new key, turn chat on again under Desk chat.' : 'Replace key: the old key stops working and a new one is shown once.'}</p></form></details>
       <details><summary class="btn danger">Disconnect</summary><form class="form" data-form="agent-update"><input type="hidden" name="id" value="${esc(a.id)}"><input type="hidden" name="revoked" value="1">
         <p>Disconnecting switches this key off for good. ${esc(a.name)} can no longer call the desk. Its past calls, research and requests stay in the ledger. To connect again, add a new agent.</p>
         ${pinField()}<div class="actions"><button class="btn danger">Disconnect ${esc(a.name)}</button></div></form></details>
@@ -1280,6 +1310,14 @@ const forms = {
       limits: limitsFrom(data),
     });
     drafts.newKey = { name: data.name, key: r.key };
+  },
+  async 'chat-enable'(form, data) {
+    await act('chat.enable', { scope: data.scope, pin: data.pin });
+    toast('Chat is on. Type in the chat panel to talk to Claude.');
+  },
+  async 'chat-limits'(form, data) {
+    await act('chat.limits', { limits: limitsFrom(data, chatLimitList()) });
+    toast('Chat limits saved. They count from the next reply.');
   },
   async 'agent-update'(form, data, submitter) {
     if (submitter?.name === 'rekey') {
@@ -1570,7 +1608,7 @@ function syncFunding(form) {
 // ---------- update check ----------
 
 /** Must match API_VERSION in src/version.js. Bump both when the page needs new server data. */
-const CLIENT_API = 7;
+const CLIENT_API = 8;
 const serverIsOld = () => (S?.meta?.api ?? 1) < CLIENT_API;
 
 /** The server keeps its code in memory; after an update it must be restarted. */
@@ -1645,16 +1683,28 @@ window.addEventListener('hashchange', () => {
   render();
 });
 
+/** True while the owner is typing in or reading an open part of the page: do not redraw it then. */
+const deskBusy = () => Boolean(document.activeElement?.closest('main form, main .verify, details[open]') || document.querySelector('details[open]'));
+
 setInterval(async () => {
-  if (document.hidden || document.activeElement?.closest('form, details[open]') || document.querySelector('details[open]')) return;
+  if (document.hidden || deskBusy()) return;
   try { await refresh(); render(); } catch { /* keep current view */ }
 }, 20_000);
+
+/** Claude changed the desk from the chat: refresh, and redraw unless the owner is busy on the page. */
+async function onDeskWrite() {
+  try {
+    await refresh();
+    if (!deskBusy()) render();
+  } catch { /* the next interval tries again */ }
+}
 
 (async () => {
   try {
     csrf = (await api('/api/session')).csrf;
     await refresh();
     render();
+    chat = initChat({ api, state: () => S, csrf: () => csrf, onDeskWrite, toast });
   } catch (err) {
     main.innerHTML = `<p class="bad">${esc(err.message)}</p>`;
   }

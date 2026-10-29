@@ -113,3 +113,19 @@ export function pageToMarkdown(root, { title = 'Swing Desk', at = '' } = {}) {
   const body = blocks(root).replace(/\n{3,}/g, '\n\n').trim();
   return `${`*Exported from ${title}${at ? ` on ${at}` : ''}*`}\n\n${body}\n`;
 }
+
+const quoted = (label, text) => String(text ?? '').trim().split('\n').map((l, n) => `> ${n ? '' : `${label}: `}${l}`.trimEnd()).join('\n');
+
+/** One chat thread as Markdown: who said what, Claude's steps as italic list lines, notes and errors quoted. */
+export function chatToMarkdown(thread, messages, { at = '' } = {}) {
+  const parts = [`*Exported from Swing Desk${at ? ` on ${at}` : ''}*`, `# ${thread?.title || 'Chat'}`];
+  for (const m of messages ?? []) {
+    const text = String(m.text ?? '').trim();
+    if (m.role === 'owner') parts.push(`**You:** ${text}`);
+    else if (m.role === 'claude') parts.push(`**Claude:**\n\n${text}`);
+    else if (m.role === 'step') parts.push(`- *${String(m.summary || m.tool || '').trim()}*`);
+    else if (m.role === 'note') parts.push(quoted('Note', text));
+    else if (m.role === 'error') parts.push(quoted('Error', text));
+  }
+  return `${parts.join('\n\n')}\n`;
+}
