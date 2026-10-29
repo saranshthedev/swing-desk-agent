@@ -11,6 +11,7 @@ Read `README.md` and `docs/RETHINK.md` first.
 - The desk never places, modifies or cancels broker orders. Do not add order endpoints, even behind a flag.
 - No MCP tool may approve, change agent access, edit strategies/playbooks/PIN, or delete or rewrite events.
   Do not add an auto-approve path.
+- The chat agent's key exists only in server memory; never write it to disk, logs, responses or chat history.
 - Use plain language in UI text: rupees, percentages, India time, borrowed money, with examples.
 
 ## Architecture
@@ -19,6 +20,7 @@ Read `README.md` and `docs/RETHINK.md` first.
 |---|---|
 | `src/core/` | Pure logic: fees, sizing, settings, rules, strategies, schedule, commands, state reducer, views |
 | `src/store/store.js` | SQLite event log with hash chain, PIN, hashed agent keys, call log |
+| `src/chat/` | Chat panel: CLI process manager, chat history (outside the event log), limits, overrule notes |
 | `src/mcp/` | stdio MCP server and tool definitions (access levels, quotas) |
 | `src/http/server.js` | Owner web API on 127.0.0.1, Host/Origin/CSRF checks, PIN-gated actions, scheduler |
 | `web/` | Browser app (ES modules, no inline script/style) |

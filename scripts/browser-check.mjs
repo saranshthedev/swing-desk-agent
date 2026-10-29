@@ -46,7 +46,7 @@ function kill(child) {
 }
 
 const temp = mkdtempSync(join(tmpdir(), 'desk-browser-'));
-const env = { ...process.env, SWING_DESK_DATA: join(temp, 'data'), SWING_DESK_PORT: String(await freePort()) };
+const env = { ...process.env, SWING_DESK_DATA: join(temp, 'data'), SWING_DESK_PORT: String(await freePort()), DESK_CLAUDE_BIN: join(root, 'tests/fixtures/fake-claude.mjs') };
 const base = `http://127.0.0.1:${env.SWING_DESK_PORT}`;
 let server, browser, mcp;
 const errors = [];
@@ -69,6 +69,9 @@ const errors = [];
   }
   // A model wrote a SWOT for MODELCO with HTML in its points: it must show as plain text.
   seed.run('agent:seed-model', (s, ctx) => C.addSection(s, { symbol: 'MODELCO', section: 'swot', text: 'Strengths :\n- Strong <img src=x onerror=1> brand\n--Weakness :\n- Debt <b>rising</b>' }, ctx));
+  // The built-in chat agent, as 'Turn on chat' would make it; the server issues its key in memory at start.
+  const chatAgent = seed.run('owner', (s, ctx) => C.addAgent(s, { name: 'Desk chat', client: 'Desk chat (built in)', scope: 'propose', expiresDays: 365 }, ctx));
+  seed.setSecret('chat_agent', chatAgent.id);
   seed.close();
 }
 
@@ -557,6 +560,51 @@ try {
   assert.equal(await js('(() => { const b = document.querySelector(".automation .btn"); const s = getComputedStyle(b); return s.color !== s.backgroundColor; })()'), true);
   await shot('today');
 
+  // Chat panel (fake Claude CLI): drawn once beside every page; a typed draft survives moving between pages.
+  const chatText = (sel) => js(`document.querySelector(${JSON.stringify(sel)})?.innerText ?? ''`);
+  assert.ok(await js('!!document.querySelector("aside#chat #chat-text") && !!document.querySelector("[data-chat=export]")'), 'chat panel with Export chat on Today');
+  assert.equal(await js('document.querySelector("#chat-heading").textContent'), 'Chat with Claude');
+  await js(`(() => { const t = document.querySelector('#chat-text'); t.value = 'draft kept'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await go('#/stock/SAMPLE');
+  await waitText('Open lots');
+  assert.equal(await js('document.querySelector("#chat-text").value'), 'draft kept', 'chat draft survives a route change');
+  assert.ok(await js('!!document.querySelector("aside#chat")'), 'chat panel on a stock page');
+  const question = 'How is the market today?';
+  await js(`document.querySelector('#chat-text').value = ${JSON.stringify(question)}`);
+  // Enter sends; Send is disabled in the same instant.
+  const sendingDisabled = await js(`(() => {
+    const t = document.querySelector('#chat-text');
+    t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    return document.querySelector('#chat-send').disabled;
+  })()`);
+  assert.equal(sendingDisabled, true, 'Send is disabled while Claude replies');
+  await until(async () => (await chatText('#chat-log')).includes(question.slice(0, 20)), 'Claude reply text in the chat', 20_000);
+  await until(() => js('!!document.querySelector("#chat-log .chat-step")'), 'a step line in the chat', 20_000);
+  await until(() => js('!document.querySelector("#chat-send").disabled && document.querySelector("#chat-stop").hidden'), 'Send enabled after the reply', 20_000);
+  assert.match(await chatText('#chat-log'), /You\s+How is the market today\?/);
+  assert.equal(await js('document.querySelector("#chat-text").value'), '', 'composer cleared after sending');
+  assert.ok(await js('!!document.querySelector("[data-chat=export]")'), 'Export chat button');
+  // The page's own Markdown export never carries the chat.
+  const pageExport = await js('import("/export-md.js").then((m) => m.pageToMarkdown(document.querySelector("main")))');
+  assert.ok(!pageExport.includes(question.slice(0, 20)), 'page export leaves out the chat');
+  await shot('chat');
+  // At phone width the chat sits below the page and nothing scrolls sideways.
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 900, deviceScaleFactor: 1, mobile: true });
+  await delay(200);
+  assert.deepEqual(await js(`(() => ({ below: document.querySelector('aside#chat').getBoundingClientRect().top >= document.querySelector('main').getBoundingClientRect().bottom - 1, wide: document.documentElement.scrollWidth <= 390 }))()`), { below: true, wide: true }, 'chat is below main and the page fits 390 px');
+  await cdp('Emulation.clearDeviceMetricsOverride');
+  await shot('chat', 390);
+  // Keyboard: Tab from the last page control reaches the chat textarea.
+  await js(`(() => { const c = [...document.querySelectorAll('main a[href], main button:not([disabled]), main input:not([type=hidden]):not([disabled]), main select, main textarea, main summary')].filter((e) => e.offsetParent); c.at(-1).focus(); })()`);
+  let reached = false;
+  for (let i = 0; i < 20 && !reached; i += 1) {
+    await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    reached = await js('document.activeElement?.id === "chat-text"');
+  }
+  assert.ok(reached, 'Tab reaches the chat textarea after the page controls');
+  await go('#/today');
+
   // Keyboard: Tab reaches the navigation and the focused link is visibly outlined.
   await js('document.activeElement?.blur(); document.body.focus()');
   await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
@@ -598,10 +646,13 @@ try {
   // Disconnect is its own clear action: the key stops working and the agent moves to the disconnected list.
   await go('#/agents');
   assert.match(await text(), /Change access or limits/);
-  await submit('agent-update', { pin: '24681357' }, { nth: 1 });
+  // The seeded chat agent has its own rows: pick the Disconnect form of the Research agent.
+  const disconnectNth = await js(`[...document.querySelectorAll('form[data-form=agent-update]')].findIndex((f) => f.elements.revoked && f.closest('li.agent')?.textContent.includes('Research agent'))`);
+  assert.ok(disconnectNth >= 0, 'Disconnect form of the Research agent');
+  await submit('agent-update', { pin: '24681357' }, { nth: disconnectNth });
   assert.match(await toast(), /disconnected/);
   await waitText('Disconnected agents (1)');
-  assert.doesNotMatch(await text(), /Change access or limits/);
+  assert.equal(await js(`[...document.querySelectorAll('li.agent')].some((li) => li.textContent.includes('Research agent'))`), false, 'the disconnected agent leaves the Connections list');
   const afterDisconnect = (await rpc('tools/call', { name: 'desk_status', arguments: {} })).result;
   assert.ok(afterDisconnect.isError, 'a disconnected key can no longer call the desk');
   await shot('agents-disconnected');

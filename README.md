@@ -104,6 +104,22 @@ Claude can save the same sections with `add_structured_note`; they show “Writt
   is **corrected** by saving it again (**Modify** starts from the saved text): the new version
   becomes current and earlier versions stay under **Earlier versions** and in the ledger.
 
+## Chat with Claude
+
+A chat panel sits beside every page. It runs the Claude Code program already installed and signed in
+on this computer, so the desk needs no API key and nothing extra to pay for.
+
+- **Turn it on** under Agents & MCP with your PIN. Choose how much Claude may do (Read, Draft or Propose).
+- **Chat limits**, also under Agents & MCP, each have an on/off switch. They cap tool calls and Claude
+  turns per reply, how long an idle session stays open, and how long one reply may take (15 minutes
+  at first).
+- Claude can research, record notes and evidence, and propose trades. It **never approves**: you
+  approve on the desk with your PIN, as always. Everything it records shows as not verified until you check it.
+- **Chat history stays on this computer**, in its own tables in the desk's database, not in the ledger.
+  Export chat saves a chat as a Markdown file.
+- Web pages Claude reads could contain instructions meant to mislead it. Check what it records
+  before you verify it.
+
 ## Limits
 
 - Charges are estimates from Zerodha’s published rates checked on 2026-10-22/23. Re-check
